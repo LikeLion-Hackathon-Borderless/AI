@@ -1,0 +1,127 @@
+# ditto-agent
+
+발신자 메시지의 시간/의미 모호성을 감지하고, 발신자가 확정할 때까지 멈췄다가(LangGraph
+`interrupt()`) 확정되면 "공동 이해 카드"를 만들어 반환하는 에이전트 패키지. FastAPI
+라우터/DB/프론트엔드는 이 패키지 밖(다른 팀원 담당)이며, 아래 두 함수가 유일한 접점.
+
+## 설치 & 실행
+
+```bash
+cd agent
+cp .env.example .env   # DITTO_LLM_MODE=mock이면 OPENAI_API_KEY 없이도 동작
+uv sync
+uv run pytest
+uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐름 확인
+```
+
+## 통합 인터페이스
+
+```python
+from ditto_agent import start, resume
+from ditto_agent.schema import DraftContext
+
+result = start(
+    draft="이 부분 검토 부탁드려요. 내일까지 조금 더 고민해 보면 좋을 것 같아요.",
+    context=DraftContext(sender_tz="Asia/Seoul", receiver_tz="America/Los_Angeles", receiver_name="Alex"),
+)
+```
+
+`start()` / `resume()`는 항상 같은 모양의 `StartResult`를 돌려준다:
+
+```python
+class StartResult:
+    thread_id: str
+    status: Literal["interrupt", "done"]
+    interrupt: InterruptPayload | None   # status == "interrupt"일 때만
+    card: ConfirmedCard | None            # status == "done"일 때만
+```
+
+- `status == "interrupt"`: 화면에 `result.interrupt`를 보여주고, 사용자가 고른 답(또는
+  직접 입력한 텍스트)을 `resume(result.thread_id, answer)`로 넘긴다. `answer`는
+  `result.interrupt.candidates` 중 하나를 그대로 넘기거나, 사용자가 직접 입력한 문자열을
+  넘겨도 된다(자유 입력 허용).
+- `status == "done"`: `result.card`가 최종 "공동 이해 카드" — 그대로 DB에 저장하고
+  수신자 화면에 렌더링하면 된다.
+- 한 요청은 `thread_id` 하나로 끝까지 추적된다. `time_confirm` interrupt 한 번,
+  `interp_confirm` interrupt 한 번, 총 최대 2번 멈춘다(모호성이 없는 항목은 자동으로
+  건너뛴다 — "모호성이 없으면 경고를 억제" 원칙).
+
+### `InterruptPayload` (핸드오프 문서 5절 JSON 스키마와 1:1 대응)
+
+```json
+{
+  "kind": "time_confirm",
+  "question": "'내일까지'의 정확한 기준 시각이 필요합니다 — 08/15 18:00 Asia/Seoul 기준으로 확정할까요?",
+  "candidates": ["2026-08-15T18:00:00+09:00", "custom"],
+  "item": {
+    "span": "내일까지",
+    "category": "TIME",
+    "reason": "상대적 기한 표현이라 기준 시각이 명시되지 않음",
+    "candidates": ["2026-08-15T18:00:00+09:00", "custom"],
+    "suggestion": "'내일까지'의 정확한 기준 시각이 필요합니다 — ..."
+  }
+}
+```
+
+`kind`는 `"time_confirm"` 또는 `"interp_confirm"` 둘 중 하나. `time_confirm`의
+`candidates`는 **ISO8601 절대시각 문자열**(+ `"custom"` — 프론트에서 직접입력 UI로
+분기)이고, `interp_confirm`의 `candidates`는 **자연어 해석 문구**다.
+
+### `ConfirmedCard` (최종 산출물)
+
+```json
+{
+  "task": "문서 검토",
+  "assignee": "Alex",
+  "deadline_confirmed": "2026-08-15T18:00:00+09:00",
+  "deadline_receiver_local": "2026-08-15T02:00:00-07:00",
+  "request_type": "검토 요청",
+  "decision_status": "필수 반영",
+  "interpretation_note": "현재 방향 유지 + 세부 보완 요청",
+  "conflict": {
+    "receiver_local_time": "2026-08-15T02:00:00-07:00",
+    "within_working_hours": false,
+    "note": "수신자 근무시간(09-18 가정) 밖 — 실제 근무시간표는 팀원 모듈에서 조회"
+  },
+  "evidence": "원문 그대로"
+}
+```
+
+## 프로덕션 배선 (서버 시작 시 1번)
+
+기본값(설정 안 하면)은 로컬 개발용이다: 메모리 체크포인터(서버 재시작하면 진행 중이던
+`thread_id`가 날아감) + placeholder 근무시간 충돌 검사(9~18시 하드코딩, 공휴일/실제
+근무시간표 미반영). 서버 앱이 뜰 때 한 번 아래처럼 교체한다:
+
+```python
+from langgraph.checkpoint.sqlite import SqliteSaver
+from ditto_agent import configure
+
+def real_conflict_checker(time_confirmed: str, context) -> ConflictResult:
+    ...  # 실제 근무시간/공휴일 DB 조회는 팀원 쪽 모듈
+
+with SqliteSaver.from_conn_string(os.environ["DITTO_CHECKPOINT_DB"]) as checkpointer:
+    configure(conflict_checker=real_conflict_checker, checkpointer=checkpointer)
+    # 이후 FastAPI 앱 수명 동안 start()/resume()이 이 설정을 씀
+```
+
+`conflict_checker`의 시그니처는 `(time_confirmed: str, context: DraftContext) ->
+ConflictResult` — `agent/src/ditto_agent/graph/conflict.py`의 `default_conflict_checker`가
+참조 구현. 이 체크포인터 DB는 **그래프 재개 상태 전용**이며, 메시지/합의 기록 같은
+도메인 데이터는 별도 DB(다른 팀원 쪽)에 저장한다 — 섞지 말 것.
+
+## 환경 변수
+
+| 변수 | 기본값 | 설명 |
+|---|---|---|
+| `DITTO_LLM_MODE` | `mock` | `mock`이면 키 없이 고정 응답, `live`면 실제 OpenAI 호출 |
+| `OPENAI_API_KEY` | (없음) | `live` 모드에서 필수 |
+| `DITTO_OPENAI_MODEL` | `gpt-5` | 구조화 출력을 지원하는 모델로 교체 가능 |
+| `DITTO_CHECKPOINT_DB` | `./ditto_checkpoints.db` | `SqliteSaver` 배선 시 사용할 경로 |
+
+## 아직 안 채운 부분
+
+- `docs/문화_판단기준표_초안.md`가 placeholder — 채워지면
+  `src/ditto_agent/llm/prompts.py`의 `FEW_SHOT_EXAMPLES`에 반영.
+- `graph/conflict.py`의 `default_conflict_checker`는 진짜 근무시간표/공휴일을 모른다
+  — 프로덕션에서는 반드시 `configure(conflict_checker=...)`로 교체.
