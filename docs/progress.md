@@ -203,3 +203,50 @@ confidence_gate.py`(계층화 샘플링 + 사람 블라인드 라벨 + 90/80/100
   실제 발화 아님)를 예시 입력인 것처럼 그대로 쓰고 있음 — golden.json 만들면서 C01-03은
   실제 발화로 새로 썼지만 prompts.py 쪽은 원본 phrase 그대로라 live 모드 프롬프트 품질에
   영향 줄 수 있음. 다음에 손볼 것.
+
+---
+
+## 2026-08-16 — 첫 live 연결, 실제 버그 발견 + 호출 최적화
+
+### Done
+
+- 사용자가 `.env`에 실제 `OPENAI_API_KEY` 세팅, `DITTO_LLM_MODE=live`로 최초 실제 연결.
+  `.env`가 실제로는 로드되고 있지 않던 걸 발견해 `__init__.py`에 `load_dotenv()` 추가.
+- **실버그 발견(Figma로 확정)**: `227:2035`/`227:2341` 프레임 확인 결과 TIME 후보는
+  파싱 가능한 절대시각이어야 하고(프론트가 수신자 시간대로 재변환·근무시간 충돌까지
+  계산), 카드의 "기한"도 수신자 로컬로 변환된 값을 보여줘야 함 — 그런데 live 모델이
+  `culture_criteria.py`의 TIME few-shot(설명 문장, ISO8601 아님)을 그대로 따라 해서
+  `deadline_confirmed`에 문장을 넣었고, `conflict_check`가 완전히 무력화됐었음.
+  → `culture_criteria.py` T01-05 candidates를 ISO8601로 전면 수정, `prompts.py`에
+  "TIME candidates는 반드시 ISO8601, 같은 모호성을 여러 항목으로 쪼개지 말 것" 명시.
+  수정 후 재확인: `conflict_check`가 정상적으로 수신자 로컬 시각·근무시간 충돌을 계산함.
+- **골든셋 live 실행 중 발견한 진짜 문제**: `T0N-explicit`(대조군) 5개 중 4개가
+  REQUEST_INTENT/TIME/OTHER로 오탐 — "~부탁드려도 될까요?" 같은 정중한 요청 어투 자체를
+  모호성으로 오인하는 패턴으로 보임. precision 이슈, 아직 원인 파악/수정 못함(다음
+  세션 과제).
+- **호출 최적화** (이 세션의 핵심 작업 — rate limit 429로 두 번 실행 다 실패한 뒤 진행):
+  - `OpenAI(max_retries=0)` — 기본 재시도(2회, 지수 백오프)가 429에도 조용히 재시도하며
+    호출 하나를 실제 HTTP 요청 여러 개로 불림 + 호출당 수십 초씩 늘어지게 만들던 원인.
+  - `eval/cache.py` 신설 — live 응답을 `.eval_cache/`(gitignore)에 캐싱, 캐시 키에
+    시스템 프롬프트 해시 포함(프롬프트 바뀌면 자동 무효화). `--no-cache`로 우회 가능.
+  - `ditto-eval --limit N` / `--only <id 부분문자열>` — 전량 대신 일부만 빠르게 확인.
+  - rate limit(`RateLimitError`) 맞으면 남은 케이스는 건너뛰고 그때까지 결과로
+    `report.json`/`.md`를 씀 — 이미 쓴 호출이 버려지지 않음(exit code 1로 구분).
+  - `cli.py`에 케이스별 진행 로그(`[i/N] id ... ok/mismatch/FAILED`) 추가 — 이전엔
+    40개 다 끝나야 아무 출력도 없어서 멈춘 건지 도는 건지 구분이 안 됐음.
+- 테스트 3개 추가(`test_eval_cache.py`, LLM 불필요). 전체 `uv run pytest` 20개 통과.
+
+### Notes
+
+- 실제 사고 원인: gpt-5가 **하루 요청 50개(RPD)** 한도인 계정 — 디버깅하며 같은 골든셋을
+  반복 실행하다 소진. 캐시가 있었으면 대부분 안 썼을 호출.
+- rate limit 에러 메시지의 "28m48s 후 재시도" 안내는 신뢰하지 않는 게 안전 — RPD는
+  보통 자정 기준 리셋에 가까움. 결제수단 등록해서 한도 올리는 게 근본 해결.
+
+### Next
+
+- (이월) `T0N-explicit` 대조군 오탐 원인 조사 — REQUEST_INTENT 판정 기준이 프롬프트에서
+  너무 느슨하게 걸려있을 가능성.
+- 한도 여유 생기면 `uv run ditto-eval`(캐시+재시도 비활성화 적용된 버전으로) 전체 재실행,
+  실제 precision/recall 확정.
+- (이월) `llm/prompts.py`의 C01-04 few-shot phrase 문제.

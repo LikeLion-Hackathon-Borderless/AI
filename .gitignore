@@ -23,6 +23,7 @@ dist/
 .vscode/
 
 outputs/
+.eval_cache/
 checkpoints/
 wandb/
 *.ckpt

@@ -14,6 +14,26 @@ uv run pytest
 uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐름 확인
 ```
 
+## 골든셋 평가 (`ditto-eval`)
+
+```bash
+uv run ditto-eval                      # data/golden.json 전체 실행
+uv run ditto-eval --limit 3            # 앞 3개만 — 빠른 확인용
+uv run ditto-eval --only T01           # id에 "T01"이 포함된 케이스만
+uv run ditto-eval --no-cache           # live 모드 캐시 무시하고 매번 새로 호출
+```
+
+**live 모드는 계정 요청 한도(RPD)에 걸리기 쉽다** — 실제로 gpt-5 하루 50회 한도인 계정에서
+40개짜리 골든셋 한 번 돌리다 소진된 적이 있다. 그래서:
+- `LLMClient`는 `max_retries=0`으로 OpenAI 클라이언트를 만든다 — 기본 재시도는 429에도
+  조용히 백오프하며 재시도해서(호출 하나가 실제로는 HTTP 요청 여러 개) 한도를 더 빨리
+  태우고 호출당 수십 초씩 늘어지게 만든다. 빠르게 실패시키는 게 낫다.
+- `eval/cache.py`가 live 응답을 `.eval_cache/`(gitignore)에 캐싱한다 — 캐시 키에 시스템
+  프롬프트 해시가 들어있어서 `prompts.py`/`culture_criteria.py`를 바꾸면 자동으로
+  무효화된다. 같은 골든셋을 반복 실행해도(스코어러만 고친 경우 등) 쿼터를 다시 안 씀.
+- rate limit(`RateLimitError`)에 걸리면 남은 케이스는 건너뛰고 그때까지의 결과로
+  `report.json`/`.md`를 쓴다 — 이미 쓴 호출이 통째로 버려지지 않는다.
+
 ## 통합 인터페이스
 
 ```python
