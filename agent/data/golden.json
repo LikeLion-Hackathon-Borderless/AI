@@ -1,0 +1,140 @@
+{
+  "default_context": {
+    "sender_tz": "Asia/Seoul",
+    "receiver_tz": "America/Los_Angeles",
+    "now_iso": "2026-08-15T10:00:00+09:00"
+  },
+  "pairs": [
+    {
+      "pair_id": "T01",
+      "note": "상대적 기한 표현 vs 명시적 일시 — culture_criteria T01 패러프레이즈",
+      "ambiguous": {"draft": "낼까지 부탁드려도 될까요?", "expected_categories": ["TIME"]},
+      "explicit": {"draft": "8월 16일 18:00까지 부탁드려도 될까요?", "expected_categories": []}
+    },
+    {
+      "pair_id": "T02",
+      "note": "막연한 긴급 표현 vs 구체적 기한 — culture_criteria T02 패러프레이즈",
+      "ambiguous": {"draft": "이거 최대한 빨리 부탁드려요", "expected_categories": ["TIME"]},
+      "explicit": {"draft": "이거 이번주 금요일 오후 5시까지 부탁드려요", "expected_categories": []}
+    },
+    {
+      "pair_id": "T03",
+      "note": "'여유되면'의 우선순위 모호성 vs 명시적 필수 마감 — culture_criteria T03 패러프레이즈",
+      "ambiguous": {"draft": "여유 되시면 오늘 안으로 봐주세요", "expected_categories": ["TIME"]},
+      "explicit": {"draft": "이건 오늘이 필수 마감이라 꼭 오늘 안으로 봐주세요", "expected_categories": []}
+    },
+    {
+      "pair_id": "T04",
+      "note": "주 단위 범위 모호성 vs 요일별 명시 — culture_criteria T04 패러프레이즈",
+      "ambiguous": {"draft": "이번 주 안에 부탁드립니다", "expected_categories": ["TIME"]},
+      "explicit": {"draft": "수요일까지 초안, 금요일까지 최종본 부탁드립니다", "expected_categories": []}
+    },
+    {
+      "pair_id": "T05",
+      "note": "'곧'의 기준 모호성 vs 구체적 시간 — culture_criteria T05 패러프레이즈",
+      "ambiguous": {"draft": "이따가 다시 말씀드릴게요", "expected_categories": ["TIME"]},
+      "explicit": {"draft": "2시간 안에 다시 말씀드릴게요", "expected_categories": []}
+    },
+    {
+      "pair_id": "F01",
+      "note": "완곡한 반대 vs 명시적 재검토 요청 — culture_criteria F01 패러프레이즈",
+      "ambiguous": {"draft": "이 방향 괜찮은데 한 번 더 생각해보면 어떨까요?", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "이 방향은 재검토가 필요할 것 같아요. 대안을 포함해서 다시 제안해주세요", "expected_categories": []}
+    },
+    {
+      "pair_id": "F02",
+      "note": "근거 없는 '다들' vs 구체적 인원 명시 — culture_criteria F02 패러프레이즈",
+      "ambiguous": {"draft": "다들 이 부분을 걱정하시는 것 같아요", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "민수님과 지훈님이 이 부분을 걱정된다고 직접 말씀하셨어요", "expected_categories": []}
+    },
+    {
+      "pair_id": "F03",
+      "note": "승인+숨은 수정요청 vs 승인/수정 분리 — culture_criteria F03 패러프레이즈",
+      "ambiguous": {"draft": "좋은 것 같아요, 근데 조금 더 봐야 할 것 같아요", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "전체적으로 승인합니다. 다만 3번 항목은 반드시 수정이 필요합니다", "expected_categories": []}
+    },
+    {
+      "pair_id": "F04",
+      "note": "축소 해석 위험 vs 필수/참고 구분 — culture_criteria F04 패러프레이즈",
+      "ambiguous": {"draft": "This looks good overall, though we might want to revisit the pricing section.", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "This is approved as-is. The pricing section is optional feedback, not required for launch.", "expected_categories": []}
+    },
+    {
+      "pair_id": "F05",
+      "note": "업무적 반대가 감정으로 오해될 위험 vs 근거+대안 명시 — culture_criteria F05 패러프레이즈",
+      "ambiguous": {"draft": "I really don't think this approach works.", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "I disagree with this approach on technical grounds, not personal ones. Here is an alternative: approach B.", "expected_categories": []}
+    },
+    {
+      "pair_id": "F06",
+      "note": "추궁으로 오해될 질문 vs 목적 명시 — culture_criteria F06 패러프레이즈",
+      "ambiguous": {"draft": "Can you explain why you chose this option?", "expected_categories": ["REQUEST_INTENT"]},
+      "explicit": {"draft": "I'm just trying to learn from your reasoning here, no concerns about the decision itself — can you walk me through it?", "expected_categories": []}
+    },
+    {
+      "pair_id": "D01",
+      "note": "임시 시도 vs 최종 확정 — culture_criteria D01 패러프레이즈",
+      "ambiguous": {"draft": "일단 이 안으로 가볼까요?", "expected_categories": ["DECISION_STATUS"]},
+      "explicit": {"draft": "이 안으로 최종 확정하겠습니다", "expected_categories": []}
+    },
+    {
+      "pair_id": "D02",
+      "note": "'완료'의 조직별 의미 차이 vs 범위 명시 — culture_criteria D02 패러프레이즈",
+      "ambiguous": {"draft": "검토 끝났습니다", "expected_categories": ["DECISION_STATUS"]},
+      "explicit": {"draft": "1차 검토만 끝났고, 최종 승인은 아직 안 났습니다", "expected_categories": []}
+    },
+    {
+      "pair_id": "D03",
+      "note": "승인 vs 단순 수신 확인 — culture_criteria D03 패러프레이즈",
+      "ambiguous": {"draft": "확인했습니다", "expected_categories": ["DECISION_STATUS"]},
+      "explicit": {"draft": "확인했고, 아직 검토 중입니다. 결정은 내일 드릴게요", "expected_categories": []}
+    },
+    {
+      "pair_id": "D04",
+      "note": "적극 동의 vs 소극적 무이의 — culture_criteria D04 패러프레이즈",
+      "ambiguous": {"draft": "이견 없습니다", "expected_categories": ["DECISION_STATUS"]},
+      "explicit": {"draft": "특별히 반대 의견은 없어서 그대로 진행하셔도 됩니다", "expected_categories": []}
+    },
+    {
+      "pair_id": "D05",
+      "note": "보류 vs 완곡한 거절 — culture_criteria D05 패러프레이즈",
+      "ambiguous": {"draft": "나중에 다시 얘기해요", "expected_categories": ["DECISION_STATUS"]},
+      "explicit": {"draft": "지금은 결정을 보류할게요. 다음 주 화요일 회의 때 다시 논의합시다", "expected_categories": []}
+    },
+    {
+      "pair_id": "C01",
+      "note": "근거 없는 결론 전달 vs 근거 포함 — culture_criteria C01을 실제 발화 예시로 구체화",
+      "ambiguous": {"draft": "예산은 B안으로 최종 결정했습니다.", "expected_categories": ["OTHER"]},
+      "explicit": {"draft": "예산은 B안으로 최종 결정했습니다. A안 대비 비용이 30% 절감되고 일정도 2주 단축되는 게 근거입니다.", "expected_categories": []}
+    },
+    {
+      "pair_id": "C02",
+      "note": "배경 없는 지시 vs 배경 포함 — culture_criteria C02를 실제 발화 예시로 구체화",
+      "ambiguous": {"draft": "이 문서 오늘까지 다시 작성해주세요.", "expected_categories": ["OTHER", "TIME"]},
+      "explicit": {"draft": "고객사 요청으로 문서 포맷이 바뀌어서, 이 문서를 오늘 18시까지 새 포맷으로 다시 작성해주세요.", "expected_categories": []}
+    },
+    {
+      "pair_id": "C03",
+      "note": "이모지/느낌표 톤 모호성 vs 명확한 텍스트 — culture_criteria C03을 실제 발화 예시로 구체화",
+      "ambiguous": {"draft": "네 좋아요!! 😊👍", "expected_categories": ["OTHER"]},
+      "explicit": {"draft": "네, 이 방향으로 진행하는 것에 동의합니다.", "expected_categories": []}
+    }
+  ],
+  "composites": [
+    {
+      "id": "COMP-01",
+      "note": "TIME + REQUEST_INTENT 동시 발생 — 실제 메시지에서 흔한 조합",
+      "draft": "낼까지 검토 부탁드리는데, 지금 방향 그대로 가도 될지 조금 더 고민해봐 주시겠어요?",
+      "expected_categories": ["TIME", "REQUEST_INTENT"]
+    },
+    {
+      "id": "COMP-02",
+      "note": "TIME + DECISION_STATUS 동시 발생",
+      "draft": "이번 주 안으로 결정 나면 좋겠는데, 이견 없으시면 그대로 진행할게요",
+      "expected_categories": ["TIME", "DECISION_STATUS"]
+    }
+  ],
+  "known_limitations": [
+    "C04(침묵/응답 없음)은 '메시지 텍스트 하나'로 표현할 수 없는 대화-턴 단위 신호라 이 golden set에서 제외 — extract()의 입력 형태(단일 draft 문자열) 자체가 감지 대상이 아님."
+  ]
+}

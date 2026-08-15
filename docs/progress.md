@@ -146,3 +146,60 @@
 
 - PR #1에 이 수정 커밋 push, 필요하면 재리뷰.
 - FastAPI 연동, live 모드 대조, GitHub push 여부는 이전 항목과 동일하게 남아있음.
+
+---
+
+## 2026-08-15 — golden-set 평가 하네스 (`ditto-eval`)
+
+### Done
+
+`planqa-eval-agent`(`tools/eval-agent/`)를 직접 조사해 관례를 이식: golden 파싱 →
+채점 → `report.json`+`report.md` 산출, `ConfusionCounts.recall/precision`은 분모 0이면
+`None`(0.0/예외 아님), CLI는 `pyproject.toml [project.scripts]`. 예전 `harness/
+confidence_gate.py`(계층화 샘플링 + 사람 블라인드 라벨 + 90/80/100% 임계값으로 막는 게이트)는
+사용자가 2026-08-08에 직접 삭제한 걸 확인 — 그 선례를 따라 **막는 게이트는 만들지 않고**
+숫자만 계산해 리포트로 보여준다.
+
+레퍼런스 조사(GitHub/논문)로 설계 보강:
+- **naver-ai/KoBBQ** — `all_samples`/`test_samples` 분리 관례 확인.
+- **CLAM**(TriviaQA 기반 ambiguous/clear 쌍) — 골든셋을 "모호함 리스트 + 대조군 리스트"가
+  아니라 **같은 시나리오의 모호한 버전/명시적 버전 쌍**으로 설계하도록 채택.
+- **Prompt contamination**(arxiv 2311.01964) — few-shot 예시를 골든셋에 그대로 재사용하면
+  "프롬프트에 준 정답 맞히기"가 되어 평가가 무의미해진다는 걸 정식 용어로 확인 →
+  `culture_criteria.py`의 20개 phrase를 golden.json에 그대로 쓰지 않고 전부 패러프레이즈함
+  (`test_golden_json_loads_and_pairs_expand_to_two_cases_each`가 이걸 회귀 테스트로 고정).
+
+산출물:
+- `agent/data/golden.json` — T01-05/F01-06/D01-05(14쌍) + C01-03(3쌍, OTHER — phrase가
+  패턴 설명이라 실제 발화로 새로 작성) + 복합 케이스 2개(COMP-01/02, 카테고리 2개 동시) =
+  40개 케이스. C04(침묵)는 단일 메시지 텍스트로 표현 불가능해 제외(`known_limitations`에
+  명시).
+- `agent/src/ditto_agent/eval/{golden,scorer,reporter,cli}.py` — `GoldenCase`/
+  `score_case()`(카테고리 단위 tp/fn/fp)/`ConfusionCounts`(planqa 관례)/`aggregate()`
+  (전체 + 카테고리별)/`write_report()`(md+json)/`ditto-eval` CLI.
+- `agent/pyproject.toml`에 `ditto-eval` 스크립트 등록.
+- 테스트 9개 추가(`test_eval_scorer.py`) — scorer 로직(LLM 불필요) + golden.json 로드 +
+  few-shot과 golden set 문구가 안 겹치는지 확인하는 contamination 회귀 테스트. 전체
+  `uv run pytest` 17개 통과, ruff clean.
+- `DITTO_LLM_MODE=mock uv run ditto-eval` 스모크 테스트: 40 케이스 다 돌고 report 생성
+  확인. recall 4%/precision 33% — **예상대로 무의미한 숫자**(mock은 "내일"/"고민"/
+  "재검토" substring만 보는 placeholder라 패러프레이즈를 대부분 못 잡음). report.md
+  상단에 이 경고 자동 삽입되게 만들어둠.
+
+### Notes
+
+- 흥미로운 확인 사례: D03-explicit("확인했고, 아직 검토 중입니다. 결정은 **내일**
+  드릴게요")가 DECISION_STATUS 대조군인데도 mock이 "내일" substring 때문에 TIME으로
+  오탐 — golden set이나 scorer 버그가 아니라 mock의 알려진 한계가 정확히 의도대로
+  드러난 것.
+
+### Next
+
+- `OPENAI_API_KEY` 확보되면 `DITTO_LLM_MODE=live uv run ditto-eval`로 실제 정확도 산출
+  — 이게 이번 세션에서 못 한 유일한 부분.
+- 후보 해석 "품질"(candidate가 그럴듯한가) 평가는 precision/recall로 못 재는 별도 영역 —
+  LLM-judge나 인터뷰 기반 평가는 스코프 밖으로 남겨둠.
+- (발견, 이번 스코프 아님) `llm/prompts.py`의 few-shot이 C01-04의 phrase(패턴 설명,
+  실제 발화 아님)를 예시 입력인 것처럼 그대로 쓰고 있음 — golden.json 만들면서 C01-03은
+  실제 발화로 새로 썼지만 prompts.py 쪽은 원본 phrase 그대로라 live 모드 프롬프트 품질에
+  영향 줄 수 있음. 다음에 손볼 것.
