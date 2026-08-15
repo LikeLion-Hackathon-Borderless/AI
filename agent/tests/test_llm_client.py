@@ -34,3 +34,10 @@ def test_invalid_llm_mode_raises_clear_error(monkeypatch):
     monkeypatch.setenv("DITTO_LLM_MODE", "Live")  # 오타/대소문자 실수
     with pytest.raises(ValueError, match="DITTO_LLM_MODE"):
         LLMClient()
+
+
+def test_unset_llm_mode_defaults_to_live_and_fails_without_key(monkeypatch):
+    monkeypatch.delenv("DITTO_LLM_MODE", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="OPENAI_API_KEY"):
+        LLMClient()

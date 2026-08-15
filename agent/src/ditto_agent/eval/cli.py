@@ -83,7 +83,7 @@ def _fetch_live(client: LLMClient, cases: list[GoldenCase], batch_size: int, pac
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
-    mode = os.getenv("DITTO_LLM_MODE", "mock")
+    mode = os.getenv("DITTO_LLM_MODE", "live")  # LLMClient의 기본값과 반드시 일치시켜야 함(리포트 라벨용)
 
     cases = load_golden_cases(args.golden)
     if args.only:

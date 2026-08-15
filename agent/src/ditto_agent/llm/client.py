@@ -68,7 +68,10 @@ def _mock_extract(draft: str, context: DraftContext) -> ExtractionResult:
 
 class LLMClient:
     def __init__(self) -> None:
-        self.mode = os.getenv("DITTO_LLM_MODE", "mock")
+        # 기본값은 "mock"이 아니라 "live" — DITTO_LLM_MODE를 아예 안 정해둔 배포는 조용히
+        # 가짜 응답만 내보내는 것보다 키가 없어 바로 죽는 게 훨씬 안전하다(silent failure 방지).
+        # 로컬 개발용 mock은 .env.example에 명시적으로 적어둬서 그 경로는 안 바뀜.
+        self.mode = os.getenv("DITTO_LLM_MODE", "live")
         if self.mode not in ("mock", "live"):
             raise ValueError(f"DITTO_LLM_MODE must be 'mock' or 'live', got {self.mode!r}")
 
@@ -77,11 +80,17 @@ class LLMClient:
         if self.mode == "live":
             from openai import OpenAI
 
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                raise ValueError(
+                    "OPENAI_API_KEY가 없는데 DITTO_LLM_MODE=live(기본값)입니다 — "
+                    "로컬 개발 중이면 DITTO_LLM_MODE=mock을 .env에 명시하세요."
+                )
             # max_retries=0 — 기본값(2)은 429/RPD 한도 초과에도 지수 백오프로 재시도한다.
             # 하루 요청 수 자체가 막힌 상황에서 재시도는 성공 확률 없이 쿼터만 더 태우고
             # 호출 하나당 수십 초씩 조용히 늘어지게 만든다 — 빠르게 실패시키고 호출부
             # (eval/cli.py)가 그 실패를 눈에 보이게 처리하도록 한다.
-            self._client = OpenAI(api_key=os.environ["OPENAI_API_KEY"], max_retries=0)
+            self._client = OpenAI(api_key=api_key, max_retries=0)
 
     def extract(self, draft: str, context: DraftContext) -> ExtractionResult:
         if self.mode == "mock":
