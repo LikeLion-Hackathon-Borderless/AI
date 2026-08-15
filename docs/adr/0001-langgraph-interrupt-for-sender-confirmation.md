@@ -24,3 +24,4 @@
   반면 LangGraph의 체크포인터 직렬화 방식에 상태 스키마가 종속되므로, `graph/state.py`
   타입을 바꿀 때는 기존에 저장된 체크포인트와의 호환성을 함께 고려해야 한다(해커톤
   스코프에서는 개발 중 체크포인트 DB를 자유롭게 초기화해도 무방).
+- References: `docs/references.md`의 "LangGraph interrupt 아키텍처" 절.

@@ -25,3 +25,5 @@
   숫자가 나빠도 코드가 막지 않는다. 나중에 실제로 반복적인 회귀(정확도가 알게 모르게
   나빠지는 사고)가 발생하면, 그때 planqa의 과거 임계값(90%/80%/100%) 같은 구체적
   숫자를 다시 참고해 게이트를 추가하는 걸 재검토한다.
+- References: `docs/references.md`의 "golden-set 평가 하네스" 절 (CLAM, prompt
+  contamination, AmbigQA 전체 인용).
