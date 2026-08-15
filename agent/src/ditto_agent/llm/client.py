@@ -63,7 +63,7 @@ class LLMClient:
         if self.mode not in ("mock", "live"):
             raise ValueError(f"DITTO_LLM_MODE must be 'mock' or 'live', got {self.mode!r}")
 
-        self.model = os.getenv("DITTO_OPENAI_MODEL", "gpt-5")
+        self.model = os.getenv("DITTO_OPENAI_MODEL", "gpt-4o-mini")
         self._client = None
         if self.mode == "live":
             from openai import OpenAI

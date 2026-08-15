@@ -145,7 +145,7 @@ ConflictResult` — `agent/src/ditto_agent/graph/conflict.py`의 `default_confli
 |---|---|---|
 | `DITTO_LLM_MODE` | `mock` | `mock`이면 키 없이 고정 응답, `live`면 실제 OpenAI 호출 |
 | `OPENAI_API_KEY` | (없음) | `live` 모드에서 필수 |
-| `DITTO_OPENAI_MODEL` | `gpt-5` | 구조화 출력을 지원하는 모델로 교체 가능 |
+| `DITTO_OPENAI_MODEL` | `gpt-4o-mini` | 구조화 출력을 지원하는 모델로 교체 가능. `gpt-5`는 계정별 RPD 한도가 매우 낮을 수 있음(실측 50/day) — 데모 등 품질이 중요한 순간에만 임시로 바꿔 쓰기 |
 | `DITTO_CHECKPOINT_DB` | `./ditto_checkpoints.db` | `SqliteSaver` 배선 시 사용할 경로 |
 
 ## 아직 안 채운 부분
