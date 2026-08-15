@@ -15,7 +15,14 @@ FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples()
 OUTPUT_SCHEMA_NOTE = """다음 필드를 가진 JSON으로만 응답하세요:
 task, assignee(nullable), deadline_raw(nullable), request_type, decision_status,
 ambiguities(list of {span, category(TIME|REQUEST_INTENT|DECISION_STATUS|OTHER), reason,
-candidates, suggestion})."""
+candidates, suggestion}).
+
+- category가 TIME인 항목의 candidates는 반드시 ISO8601 절대시각 문자열이어야 합니다
+  (예: "2026-08-16T18:00:00+09:00"). 설명 문장을 넣지 마세요 — 프론트가 이 값을 그대로
+  파싱해서 화면에 포맷하고, 수신자 시간대 변환·근무시간 충돌 검사에도 그대로 씁니다.
+  직접 입력을 허용하려면 candidates에 문자열 "custom"을 추가하세요.
+- 같은 원문 구간(span)에서 나온 모호성이 시간 관련이면 TIME 항목 하나로 합치세요 —
+  "정확한 시각"과 "필수 여부"처럼 관련된 질문을 별도 ambiguity 항목으로 쪼개지 마세요."""
 
 
 def build_system_prompt() -> str:
