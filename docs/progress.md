@@ -297,3 +297,32 @@ confidence_gate.py`(계층화 샘플링 + 사람 블라인드 라벨 + 90/80/100
   negative few-shot을 더 늘리거나 few-shot 배치(양성/부정 인접시키기) 조정 검토.
 - 계정 요청 한도(모델별 50/day로 추정) 자체를 결제수단 등록으로 올릴지 사용자 결정
   필요 — 매 세션 디버깅만으로도 하루치가 순식간에 소진됨.
+
+---
+
+## 2026-08-16 (계속) — 배치 호출로 요청 수 자체를 줄임
+
+### Done
+
+사용자 제안("모델에 넣을 때 최적화된 파일로 호출 수를 줄이면 되잖아")을 받아 **여러
+골든셋 케이스를 한 번의 API 호출로 묶어 처리**하도록 구현 — planqa `judge.py`의
+"배치 호출 + 누락 항목만 개별 폴백" 패턴을 그대로 이식.
+
+- `schema.py`: `BatchExtractionItem`/`BatchExtractionResult`(`{items: [{index, extraction}]}`).
+- `prompts.py`: `build_batch_user_prompt()`(메시지 여러 개를 `[index]` 태그로 나열),
+  `build_system_prompt(batch=True)`로 배치 응답 형식 지시(`BATCH_OUTPUT_SCHEMA_NOTE`) 추가.
+- `llm/client.py`: `LLMClient.extract_batch(items) -> dict[index, ExtractionResult]` 신설.
+  **실사용 흐름(`interface.start()`)은 안 씀** — 배치는 eval 전용, 실제 발신자는 항상
+  메시지 1개이므로 배칭할 이유가 없음.
+- `eval/cli.py`: `--batch-size`(기본 10) 만큼 묶어서 호출, 배치 응답에서 빠진 index는
+  건별로 개별 재시도(fallback), rate limit이면 그 시점까지 결과로 부분 리포트 작성.
+- 테스트 4개 추가(`test_eval_batch.py`) — 배치 완전 응답/부분 누락 폴백/rate limit 중단
+  3가지 케이스를 페이크 클라이언트로 검증(LLM 무관). 전체 `uv run pytest` 24개 통과.
+- **실 API로 배치 검증 완료**: `--limit 2 --batch-size 2`로 1콜에 2케이스 처리 성공
+  (둘 다 정답). 이후 전체 40개(4콜 예정) 시도는 바로 재차 RPD 50/50에 걸려 실패 —
+  직전 세션에서 이미 한도를 다 써서 여유가 딱 1콜만 남아있었던 것.
+
+### Next
+
+- 한도 풀리면 `uv run ditto-eval`(이제 40콜이 아니라 4콜) 한 번으로 전체 재실행,
+  실제 precision/recall 확정 — 위 항목과 동일하게 여전히 미해결.

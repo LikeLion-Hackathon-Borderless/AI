@@ -2,8 +2,17 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ditto_agent.llm.prompts import build_system_prompt, build_user_prompt
-from ditto_agent.schema import AmbiguityItem, DraftContext, ExtractionResult
+from ditto_agent.llm.prompts import (
+    build_batch_user_prompt,
+    build_system_prompt,
+    build_user_prompt,
+)
+from ditto_agent.schema import (
+    AmbiguityItem,
+    BatchExtractionResult,
+    DraftContext,
+    ExtractionResult,
+)
 
 
 def _mock_deadline_raw(draft: str) -> str | None:
@@ -91,3 +100,28 @@ class LLMClient:
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
         return parsed
+
+    def extract_batch(self, items: list[tuple[str, DraftContext]]) -> dict[int, ExtractionResult]:
+        # 골든셋 평가처럼 서로 무관한 메시지 다수를 한 번에 처리할 때 씀 — 요청 수(RPD) 자체가
+        # 쿼터인 계정에서는 메시지당 호출 1개보다 이게 훨씬 아낀다. 실사용 흐름(interface.start())은
+        # 항상 메시지 1개라 이 메서드를 안 씀 — 배치는 eval 전용.
+        if self.mode == "mock":
+            return {i: _mock_extract(draft, ctx) for i, (draft, ctx) in enumerate(items)}
+
+        entries = []
+        for i, (draft, ctx) in enumerate(items):
+            now_iso = ctx.now_iso or datetime.now(ZoneInfo(ctx.sender_tz)).isoformat()
+            entries.append((i, draft, ctx.sender_tz, ctx.receiver_tz, now_iso))
+
+        completion = self._client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": build_system_prompt(batch=True)},
+                {"role": "user", "content": build_batch_user_prompt(entries)},
+            ],
+            response_format=BatchExtractionResult,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
+        return {item.index: item.extraction for item in parsed.items}

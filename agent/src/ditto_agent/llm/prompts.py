@@ -36,7 +36,7 @@ candidates, suggestion}).
   "정확한 시각"과 "필수 여부"처럼 관련된 질문을 별도 ambiguity 항목으로 쪼개지 마세요."""
 
 
-def build_system_prompt() -> str:
+def build_system_prompt(batch: bool = False) -> str:
     positive = "\n\n".join(
         f"예시 입력: {ex['input']}\n예시 모호성: {ex['ambiguity']}" for ex in FEW_SHOT_EXAMPLES
     )
@@ -44,8 +44,9 @@ def build_system_prompt() -> str:
         f"예시 입력: {text}\n예시 결과: ambiguities: [] (모호성 없음 — 경고를 만들어내지 않음)"
         for text in NEGATIVE_FEW_SHOT_EXAMPLES
     )
+    schema_note = f"{OUTPUT_SCHEMA_NOTE}\n\n{BATCH_OUTPUT_SCHEMA_NOTE}" if batch else OUTPUT_SCHEMA_NOTE
     return (
-        f"{SYSTEM_PRINCIPLE}\n\n{OUTPUT_SCHEMA_NOTE}\n\n"
+        f"{SYSTEM_PRINCIPLE}\n\n{schema_note}\n\n"
         f"[few-shot 예시 — 모호성 있음]\n{positive}\n\n"
         f"[few-shot 예시 — 모호성 없음, ambiguities는 반드시 빈 리스트]\n{negative}"
     )
@@ -57,3 +58,19 @@ def build_user_prompt(draft: str, sender_tz: str, receiver_tz: str, now_iso: str
         f"수신자 시간대: {receiver_tz}\n"
         f"메시지 초안:\n{draft}"
     )
+
+
+BATCH_OUTPUT_SCHEMA_NOTE = """여러 개의 서로 무관한 메시지가 [index] 태그로 주어집니다.
+각 메시지를 독립적으로 처리하고(서로 참조하지 마세요), 응답은
+{items: [{index, extraction: {task, assignee, deadline_raw, request_type, decision_status,
+ambiguities}}]} 형태로 주어진 메시지 개수만큼 정확히 하나씩 포함하세요. 순서는 상관없지만
+index는 절대 빠뜨리거나 중복하지 마세요."""
+
+
+def build_batch_user_prompt(entries: list[tuple[int, str, str, str, str]]) -> str:
+    # entries: (index, draft, sender_tz, receiver_tz, now_iso)
+    blocks = [
+        f"[{i}] 발신자 시간대: {sender_tz} (현재 {now_iso}) / 수신자 시간대: {receiver_tz}\n메시지: {draft}"
+        for i, draft, sender_tz, receiver_tz, now_iso in entries
+    ]
+    return "\n\n".join(blocks)

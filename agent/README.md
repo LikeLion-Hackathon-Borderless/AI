@@ -21,10 +21,17 @@ uv run ditto-eval                      # data/golden.json 전체 실행
 uv run ditto-eval --limit 3            # 앞 3개만 — 빠른 확인용
 uv run ditto-eval --only T01           # id에 "T01"이 포함된 케이스만
 uv run ditto-eval --no-cache           # live 모드 캐시 무시하고 매번 새로 호출
+uv run ditto-eval --batch-size 20      # 호출 한 번에 20케이스씩 묶기 — 요청 수 자체를 줄임
 ```
 
-**live 모드는 계정 요청 한도(RPD)에 걸리기 쉽다** — 실제로 gpt-5 하루 50회 한도인 계정에서
-40개짜리 골든셋 한 번 돌리다 소진된 적이 있다. 그래서:
+**live 모드는 계정 요청 한도(RPD)에 걸리기 쉽다** — 실제로 gpt-5/gpt-4o-mini 둘 다 하루
+50회 한도인 계정에서 40개짜리 골든셋 한 번 돌리다 소진된 적이 있다(모델 바꿔도 한도가
+따로 안 늘어남 — 계정 자체가 모델별로 각 50/day인 것으로 보임). 그래서:
+- **케이스 여러 개를 호출 하나로 묶어 보낸다**(`LLMClient.extract_batch`, 기본
+  `--batch-size 10` — 40개면 4콜) — RPD 자체가 쿼터인 계정에서는 이게 가장 직접적인
+  절감. 배치 응답에서 누락된 index가 있으면(모델이 항목을 빠뜨림) 그 케이스만 개별
+  `extract()`로 재시도. 이 배치 경로는 **eval 전용**이다 — 실사용(`interface.start()`)은
+  항상 메시지 1개라 배칭할 이유가 없어서 안 씀.
 - `LLMClient`는 `max_retries=0`으로 OpenAI 클라이언트를 만든다 — 기본 재시도는 429에도
   조용히 백오프하며 재시도해서(호출 하나가 실제로는 HTTP 요청 여러 개) 한도를 더 빨리
   태우고 호출당 수십 초씩 늘어지게 만든다. 빠르게 실패시키는 게 낫다.

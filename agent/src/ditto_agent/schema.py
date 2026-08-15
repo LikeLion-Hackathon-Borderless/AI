@@ -29,6 +29,15 @@ class ExtractionResult(BaseModel):
     ambiguities: list[AmbiguityItem] = Field(default_factory=list)
 
 
+class BatchExtractionItem(BaseModel):
+    index: int
+    extraction: ExtractionResult
+
+
+class BatchExtractionResult(BaseModel):
+    items: list[BatchExtractionItem]
+
+
 class InterruptPayload(BaseModel):
     step: int
     total: int
