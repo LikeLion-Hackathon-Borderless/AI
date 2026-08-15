@@ -9,25 +9,25 @@
       "pair_id": "T01",
       "note": "상대적 기한 표현 vs 명시적 일시 — culture_criteria T01 패러프레이즈",
       "ambiguous": {"draft": "낼까지 부탁드려도 될까요?", "expected_categories": ["TIME"]},
-      "explicit": {"draft": "8월 16일 18:00까지 부탁드려도 될까요?", "expected_categories": []}
+      "explicit": {"draft": "8월 16일 18:00 KST까지 부탁드려도 될까요?", "expected_categories": []}
     },
     {
       "pair_id": "T02",
       "note": "막연한 긴급 표현 vs 구체적 기한 — culture_criteria T02 패러프레이즈",
       "ambiguous": {"draft": "이거 최대한 빨리 부탁드려요", "expected_categories": ["TIME"]},
-      "explicit": {"draft": "이거 이번주 금요일 오후 5시까지 부탁드려요", "expected_categories": []}
+      "explicit": {"draft": "이거 이번주 금요일 오후 5시(KST)까지 부탁드려요", "expected_categories": []}
     },
     {
       "pair_id": "T03",
       "note": "'여유되면'의 우선순위 모호성 vs 명시적 필수 마감 — culture_criteria T03 패러프레이즈",
       "ambiguous": {"draft": "여유 되시면 오늘 안으로 봐주세요", "expected_categories": ["TIME"]},
-      "explicit": {"draft": "이건 오늘이 필수 마감이라 꼭 오늘 안으로 봐주세요", "expected_categories": []}
+      "explicit": {"draft": "이건 오늘이 필수 마감이라 꼭 오늘 오후 6시(KST)까지 봐주세요", "expected_categories": []}
     },
     {
       "pair_id": "T04",
       "note": "주 단위 범위 모호성 vs 요일별 명시 — culture_criteria T04 패러프레이즈",
       "ambiguous": {"draft": "이번 주 안에 부탁드립니다", "expected_categories": ["TIME"]},
-      "explicit": {"draft": "수요일까지 초안, 금요일까지 최종본 부탁드립니다", "expected_categories": []}
+      "explicit": {"draft": "수요일 오후 6시(KST)까지 초안, 금요일 오후 6시(KST)까지 최종본 부탁드립니다", "expected_categories": []}
     },
     {
       "pair_id": "T05",
@@ -111,7 +111,7 @@
       "pair_id": "C02",
       "note": "배경 없는 지시 vs 배경 포함 — culture_criteria C02를 실제 발화 예시로 구체화",
       "ambiguous": {"draft": "이 문서 오늘까지 다시 작성해주세요.", "expected_categories": ["OTHER", "TIME"]},
-      "explicit": {"draft": "고객사 요청으로 문서 포맷이 바뀌어서, 이 문서를 오늘 18시까지 새 포맷으로 다시 작성해주세요.", "expected_categories": []}
+      "explicit": {"draft": "고객사 요청으로 문서 포맷이 바뀌어서, 이 문서를 오늘 18시(KST)까지 새 포맷으로 다시 작성해주세요.", "expected_categories": []}
     },
     {
       "pair_id": "C03",

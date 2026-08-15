@@ -12,6 +12,17 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 # 구조화한 것 — RAG 불필요, 20개면 컨텍스트 윈도우 안에 들어가는 양(문서 5절 원칙).
 FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples()
 
+# culture_criteria.py 20개가 전부 "모호함" 양성 예시뿐이라, 골든셋 평가에서 명시적 문장까지
+# 전부 오탐(precision 0.51)하는 걸 확인함 — 부정 예시가 하나도 없어 "항상 뭔가는 모호하다"는
+# 패턴을 학습한 것으로 보임. golden.json과 겹치지 않는 새 문장으로 대조 예시를 넣는다.
+NEGATIVE_FEW_SHOT_EXAMPLES: list[str] = [
+    "9월 2일 오전 10시(KST)까지 회신 부탁드립니다.",
+    "이대로 최종 승인합니다. 추가 수정 없이 그대로 진행해주세요.",
+    "정식 승인 완료했습니다. 바로 착수하셔도 됩니다.",
+    "예산은 200만원으로 확정했고, 지난 회의에서 합의된 대로 진행합니다.",
+    "오늘 회의는 예정대로 3시에 진행됩니다.",
+]
+
 OUTPUT_SCHEMA_NOTE = """다음 필드를 가진 JSON으로만 응답하세요:
 task, assignee(nullable), deadline_raw(nullable), request_type, decision_status,
 ambiguities(list of {span, category(TIME|REQUEST_INTENT|DECISION_STATUS|OTHER), reason,
@@ -26,10 +37,18 @@ candidates, suggestion}).
 
 
 def build_system_prompt() -> str:
-    examples = "\n\n".join(
+    positive = "\n\n".join(
         f"예시 입력: {ex['input']}\n예시 모호성: {ex['ambiguity']}" for ex in FEW_SHOT_EXAMPLES
     )
-    return f"{SYSTEM_PRINCIPLE}\n\n{OUTPUT_SCHEMA_NOTE}\n\n[few-shot 예시]\n{examples}"
+    negative = "\n\n".join(
+        f"예시 입력: {text}\n예시 결과: ambiguities: [] (모호성 없음 — 경고를 만들어내지 않음)"
+        for text in NEGATIVE_FEW_SHOT_EXAMPLES
+    )
+    return (
+        f"{SYSTEM_PRINCIPLE}\n\n{OUTPUT_SCHEMA_NOTE}\n\n"
+        f"[few-shot 예시 — 모호성 있음]\n{positive}\n\n"
+        f"[few-shot 예시 — 모호성 없음, ambiguities는 반드시 빈 리스트]\n{negative}"
+    )
 
 
 def build_user_prompt(draft: str, sender_tz: str, receiver_tz: str, now_iso: str) -> str:

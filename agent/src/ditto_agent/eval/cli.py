@@ -1,6 +1,7 @@
 import argparse
 import os
 import sys
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -19,6 +20,12 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=None, help="처음 N개 케이스만 실행 — 빠른 확인용")
     parser.add_argument("--only", type=str, default=None, help="이 문자열을 id에 포함하는 케이스만 실행 (예: T01)")
     parser.add_argument("--no-cache", action="store_true", help="live 모드에서도 캐시를 쓰지 않고 매번 새로 호출")
+    parser.add_argument(
+        "--pace",
+        type=float,
+        default=float(os.getenv("DITTO_EVAL_PACE_SECONDS", "2.0")),
+        help="live 모드에서 실제 API 호출 사이 대기 시간(초) — 분당 요청 한도(RPM) 회피용. 캐시 히트는 안 기다림",
+    )
     return parser.parse_args(argv)
 
 
@@ -53,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
             result, from_cache = _extract_cached(client, case.draft, DraftContext(**case.context), not args.no_cache)
         except Exception as exc:  # noqa: BLE001 — golden-set 실행 중 하나가 실패해도 나머지/이미 번 호출은 살린다
             is_rate_limit = type(exc).__name__ == "RateLimitError"
-            print(f"FAILED ({exc.__class__.__name__})")
+            print(f"FAILED ({exc.__class__.__name__}): {str(exc)[:200]}")
             if is_rate_limit:
                 print("rate limit — 남은 케이스 건너뛰고 지금까지 결과로 리포트를 씁니다.")
                 aborted = True
@@ -65,6 +72,9 @@ def main(argv: list[str] | None = None) -> int:
         tag = " [cache]" if from_cache else ""
         print(("ok" if score.is_exact_match else f"mismatch (got={sorted(score.got_categories)})") + tag, flush=True)
         scores.append(score)
+
+        if mode == "live" and not from_cache and args.pace > 0:
+            time.sleep(args.pace)
 
     report = aggregate(scores)
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")

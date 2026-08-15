@@ -250,3 +250,50 @@ confidence_gate.py`(계층화 샘플링 + 사람 블라인드 라벨 + 90/80/100
 - 한도 여유 생기면 `uv run ditto-eval`(캐시+재시도 비활성화 적용된 버전으로) 전체 재실행,
   실제 precision/recall 확정.
 - (이월) `llm/prompts.py`의 C01-04 few-shot phrase 문제.
+
+---
+
+## 2026-08-16 (계속) — 전체 골든셋 첫 live 실행 + 원인 재정정
+
+### Done
+
+- `gpt-4o-mini`로 전체 40개 골든셋 첫 완주(`status=complete`): **recall=0.875,
+  precision=0.512**. 패턴이 극단적으로 깔끔했음 — T/F/D 계열 `-ambiguous` 16개는
+  **전부** 정답, `-explicit`(대조군) 16개는 **전부** 오탐(ambiguous 쪽과 같은
+  카테고리로 플래그됨). OTHER(C01-03)는 카테고리 자체를 헷갈림(DECISION_STATUS로
+  오분류). 복합 케이스(COMP-01/02)는 둘 다 정답.
+- 1차 가설: `culture_criteria.py` few-shot 20개가 전부 "모호함" 양성 예시뿐이라 부정
+  예시가 없어서 생긴 편향 → `prompts.py`에 `NEGATIVE_FEW_SHOT_EXAMPLES`(TIME/
+  REQUEST_INTENT/DECISION_STATUS/일반 각 1~2개, golden.json과 안 겹치는 새 문장) 추가.
+- `explicit` 19개만 재테스트 — REQUEST_INTENT 쪽은 일부 개선(F02-explicit 통과)됐지만
+  **TIME은 5/5 그대로 전부 실패**. negative few-shot만으로는 TIME을 못 고침.
+- **2차 원인, 더 근본적: golden.json 자체의 버그.** T01/T02/T03/T04-explicit과
+  C02-explicit이 시간대 표기 없이 "8월 16일 18:00까지", "오늘 안으로", "수요일까지"
+  같은 표현을 쓰고 있었음 — 이건 T01이 원래 지적하려던 모호성(발신자/수신자 시간대
+  기준 불명확)을 그대로 갖고 있는 문장이라, 모델이 TIME으로 플래그한 게 오히려 golden
+  라벨(`[]`)보다 합리적이었을 가능성이 높음. → 5개 케이스 모두 "(KST)" 명시 + "오늘
+  안으로"처럼 남아있던 애매한 표현을 구체 시각으로 교체.
+- **정정**: `gpt-4o-mini`도 `gpt-5`와 동일하게 **하루 요청 50개(RPD)** 한도였음 —
+  모델을 싸게 바꾼다고 한도가 안 늘어남(계정 자체가 모델별로 각 50/day인 걸로 보임).
+  이전 세션 노트의 "cheaper model = higher limit" 가정은 틀렸음, 정정.
+- 오늘 두 모델 다 일일 한도 소진 — 골든셋 수정본으로 재실행은 다음 세션(또는 한도
+  리셋/결제수단 등록 후).
+- `uv run pytest` 20개 통과(golden.json 구조 변경이 로더 테스트를 안 깨는지 확인).
+
+### Notes
+
+- **precision 0.512라는 숫자 자체를 신뢰하지 말 것** — golden.json의 TIME explicit
+  라벨 버그가 섞여 있던 상태에서 잰 수치라, 실제 오탐률은 이보다 낮을 가능성이 높음.
+  golden.json 수정 반영 후 재측정 전까지는 참고용 하한선 정도로만 취급.
+- `.eval_cache/`의 캐시 키에 시스템 프롬프트 해시가 들어있어서, negative few-shot을
+  추가한 시점에 이전 40개 캐시가 전부 자동 무효화됨 — 의도대로 동작 확인.
+
+### Next
+
+- 한도 풀리면 수정된 golden.json + negative few-shot 조합으로 전체 40개 재실행,
+  실제 precision/recall 확정.
+- REQUEST_INTENT/DECISION_STATUS 쪽 explicit 오탐(F01/F03/F05/F06, D01/D02/D04
+  explicit 등)은 golden.json 라벨 문제가 아니라 실제 모델 과다 플래깅으로 보임 —
+  negative few-shot을 더 늘리거나 few-shot 배치(양성/부정 인접시키기) 조정 검토.
+- 계정 요청 한도(모델별 50/day로 추정) 자체를 결제수단 등록으로 올릴지 사용자 결정
+  필요 — 매 세션 디버깅만으로도 하루치가 순식간에 소진됨.
