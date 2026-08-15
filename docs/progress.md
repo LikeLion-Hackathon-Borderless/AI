@@ -103,3 +103,46 @@
 
 - 인터뷰 검증 후 `culture_criteria.py`의 `verified` 필드 갱신.
 - 위와 동일: FastAPI 연동, live 모드 대조, GitHub push 여부 확인.
+
+---
+
+## 2026-08-15 — PR #1 코드 리뷰 반영
+
+### Done
+
+`/code-review`(백그라운드 서브에이전트) 결과 8건 전부 수정:
+
+- **DECISION_STATUS/OTHER 모호성이 확인 안 되고 버려지던 문제**: `time_confirm_node`/
+  `interp_confirm_node` 2개 고정 노드를 `confirm_ambiguities_node` 1개로 교체 —
+  `extraction.ambiguities`에 담긴 항목 전부를 카테고리 무관하게 순서대로 interrupt로
+  확인받는다. `InterruptPayload`도 `kind/question/candidates` 중복 필드를 걷어내고
+  `step/total/item`으로 단순화(질문/후보는 `item.suggestion`/`item.candidates`에
+  이미 있었음).
+- **카테고리당 첫 항목만 쓰던 문제**: `build_card_node`가 TIME/REQUEST_INTENT/
+  DECISION_STATUS 각각 첫 번째 확인 답만 지정 필드(`deadline_confirmed`/
+  `interpretation_note`/`decision_status`)에 반영하고, 그 이후(같은 카테고리 중복
+  또는 OTHER)는 새로 추가한 `ConfirmedCard.notes: list[str]`에 쌓아 — 어떤 확인
+  항목도 조용히 버려지지 않게 함.
+- **`DITTO_LLM_MODE` 오타 시 애매한 `AttributeError`**: `LLMClient.__init__`이
+  `"mock"`/`"live"` 외 값이면 생성 시점에 바로 `ValueError`.
+- **`interface.py` 전역 `_graph` 싱글턴 레이스**: `threading.Lock`으로 체크-then-set
+  보호(double-checked locking).
+- **mock 추출기가 명시적 기한을 "명시된 기한 없음"으로 잘못 표시**: `_mock_deadline_raw`
+  가 "내일" 외에도 "...까지" 패턴을 감지해 `deadline_raw`를 채움.
+- **CLAUDE.md "no docstrings" 위반 3건**: `interface.py`(`configure`),
+  `cli_demo.py`, `culture_criteria.py`의 docstring을 제거하고 필요한 것만 짧은
+  인라인 "why" 주석으로 대체.
+- 리팩터 과정에서 `StateSnapshot.next`가 "다음 노드"를, `StateSnapshot.interrupts`가
+  "미해결 interrupt"를 가리키는 서로 다른 필드라는 걸 재확인 — 노드 하나 안에서
+  `interrupt()`를 여러 번 부르는 구조(이번 리팩터)에서는 `.next`가 비어 있어도
+  `.interrupts`는 차 있을 수 있음. `_read_state`가 이제 `.interrupts`를 봄.
+- 새 테스트 `test_build_card_node.py`(중복/OTHER 카테고리가 notes로 가는지) +
+  `test_invalid_llm_mode_raises_clear_error` 추가. 기존 그래프 테스트는 새
+  `InterruptPayload` 모양에 맞게 갱신. `uv run pytest` 10개 전부 통과, ruff clean.
+- `agent/README.md`의 `InterruptPayload`/`ConfirmedCard` 예시 JSON을 새 스키마로
+  갱신.
+
+### Next
+
+- PR #1에 이 수정 커밋 push, 필요하면 재리뷰.
+- FastAPI 연동, live 모드 대조, GitHub push 여부는 이전 항목과 동일하게 남아있음.

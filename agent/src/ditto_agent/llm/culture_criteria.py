@@ -1,11 +1,5 @@
-"""Structured form of docs/문화_판단기준표_초안.md — kept in sync by hand.
-
-Source table uses 4 Culture Map axes (Scheduling/Evaluating/Disagreeing/Communicating)
-classified by the KoBBQ 3-stage framework's 양방향 공통(Simply-Transferred) vs
-방향별 상이(Target-Modified) split. All 20 items are unverified (verified=False) —
-see docs/문화_판단기준표_초안.md for the interview-validation plan.
-"""
-
+# 구조화된 형태의 docs/문화_판단기준표_초안.md — 손으로 동기화 유지, verified=False는
+# 아직 인터뷰 검증 전이라는 뜻(검증 계획은 그 문서 참고).
 from typing import Literal, TypedDict
 
 Category = Literal["TIME", "REQUEST_INTENT", "DECISION_STATUS", "OTHER"]

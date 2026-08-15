@@ -30,9 +30,8 @@ class ExtractionResult(BaseModel):
 
 
 class InterruptPayload(BaseModel):
-    kind: Literal["time_confirm", "interp_confirm"]
-    question: str
-    candidates: list[str]
+    step: int
+    total: int
     item: AmbiguityItem
 
 
@@ -50,6 +49,7 @@ class ConfirmedCard(BaseModel):
     request_type: str
     decision_status: str
     interpretation_note: str | None
+    notes: list[str] = Field(default_factory=list)
     conflict: ConflictResult
     evidence: str
 

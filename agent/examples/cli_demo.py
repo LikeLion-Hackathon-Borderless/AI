@@ -1,16 +1,14 @@
-"""Exercises start()/resume() end-to-end without needing the FastAPI teammate's server.
+# uv run python examples/cli_demo.py — exercises start()/resume() without a FastAPI server.
 
-Run: uv run python examples/cli_demo.py
-"""
-
-from ditto_agent import start, resume
+from ditto_agent import resume, start
 from ditto_agent.schema import StartResult
 
 
 def _print_interrupt(result: StartResult) -> None:
     assert result.interrupt is not None
-    print(f"\n[{result.interrupt.kind}] {result.interrupt.question}")
-    for i, c in enumerate(result.interrupt.candidates):
+    item = result.interrupt.item
+    print(f"\n[{result.interrupt.step}/{result.interrupt.total} · {item.category}] {item.suggestion}")
+    for i, c in enumerate(item.candidates):
         print(f"  {i}) {c}")
 
 
@@ -21,7 +19,7 @@ def main() -> None:
     result = start(draft)
     while result.status == "interrupt":
         _print_interrupt(result)
-        answer = result.interrupt.candidates[0]
+        answer = result.interrupt.item.candidates[0]
         print(f"  -> 자동 선택: {answer}")
         result = resume(result.thread_id, answer)
 

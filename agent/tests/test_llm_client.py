@@ -1,4 +1,4 @@
-import os
+import pytest
 
 from ditto_agent.llm.client import LLMClient
 from ditto_agent.schema import DraftContext
@@ -28,3 +28,9 @@ def test_mock_time_candidate_is_iso8601_and_one_day_ahead(monkeypatch):
     )
     time_item = next(a for a in result.ambiguities if a.category == "TIME")
     assert time_item.candidates[0] == "2026-08-15T18:00:00+09:00"
+
+
+def test_invalid_llm_mode_raises_clear_error(monkeypatch):
+    monkeypatch.setenv("DITTO_LLM_MODE", "Live")  # 오타/대소문자 실수
+    with pytest.raises(ValueError, match="DITTO_LLM_MODE"):
+        LLMClient()

@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from datetime import datetime
-from typing import Callable
 from zoneinfo import ZoneInfo
 
 from ditto_agent.schema import ConflictResult, DraftContext

@@ -6,13 +6,22 @@ from ditto_agent.llm.prompts import build_system_prompt, build_user_prompt
 from ditto_agent.schema import AmbiguityItem, DraftContext, ExtractionResult
 
 
+def _mock_deadline_raw(draft: str) -> str | None:
+    if "내일" in draft:
+        return "내일까지"
+    idx = draft.find("까지")
+    if idx == -1:
+        return None
+    tokens = draft[:idx].split()
+    return " ".join(tokens[-3:]) + "까지"
+
+
 def _mock_extract(draft: str, context: DraftContext) -> ExtractionResult:
     now = datetime.fromisoformat(context.now_iso) if context.now_iso else datetime.now(ZoneInfo(context.sender_tz))
     ambiguities: list[AmbiguityItem] = []
-    deadline_raw = None
+    deadline_raw = _mock_deadline_raw(draft)
 
     if "내일" in draft:
-        deadline_raw = "내일까지"
         tomorrow_18 = (now + timedelta(days=1)).replace(hour=18, minute=0, second=0, microsecond=0)
         ambiguities.append(
             AmbiguityItem(
@@ -51,6 +60,9 @@ def _mock_extract(draft: str, context: DraftContext) -> ExtractionResult:
 class LLMClient:
     def __init__(self) -> None:
         self.mode = os.getenv("DITTO_LLM_MODE", "mock")
+        if self.mode not in ("mock", "live"):
+            raise ValueError(f"DITTO_LLM_MODE must be 'mock' or 'live', got {self.mode!r}")
+
         self.model = os.getenv("DITTO_OPENAI_MODEL", "gpt-5")
         self._client = None
         if self.mode == "live":

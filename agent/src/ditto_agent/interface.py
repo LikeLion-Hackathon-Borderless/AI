@@ -1,3 +1,4 @@
+import threading
 import uuid
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -7,34 +8,39 @@ from langgraph.types import Command
 
 from ditto_agent.graph.build import build_graph
 from ditto_agent.graph.conflict import ConflictChecker
-from ditto_agent.schema import ConfirmedCard, DraftContext, InterruptPayload, StartResult
+from ditto_agent.schema import (
+    ConfirmedCard,
+    DraftContext,
+    InterruptPayload,
+    StartResult,
+)
 
 _graph = None
+_graph_lock = threading.Lock()
 
 
+# 서버 시작 시 1번 호출해 conflict_checker/checkpointer를 실제 구현으로 교체한다.
+# 안 부르면 start()/resume() 첫 호출 때 placeholder conflict_checker + MemorySaver로
+# 기본 구성됨 — 로컬 개발용, 재시작 시 스레드 상태가 날아가므로 프로덕션에는 부적합.
 def configure(conflict_checker: ConflictChecker | None = None, checkpointer: BaseCheckpointSaver | None = None) -> None:
-    """Call once at process startup to inject a real conflict_checker / checkpointer.
-
-    Without this, start()/resume() build a graph on first use with the placeholder
-    conflict checker and an in-memory checkpointer — fine for local dev, not for a
-    server that restarts. See agent/README.md.
-    """
     global _graph
-    _graph = build_graph(conflict_checker=conflict_checker, checkpointer=checkpointer)
+    with _graph_lock:
+        _graph = build_graph(conflict_checker=conflict_checker, checkpointer=checkpointer)
 
 
 def _get_graph():
     global _graph
     if _graph is None:
-        _graph = build_graph()
+        with _graph_lock:
+            if _graph is None:
+                _graph = build_graph()
     return _graph
 
 
 def _read_state(thread_id: str, config: dict) -> StartResult:
     snapshot = _get_graph().get_state(config)
-    if snapshot.next:
-        task = snapshot.tasks[0]
-        payload = InterruptPayload.model_validate(task.interrupts[0].value)
+    if snapshot.interrupts:
+        payload = InterruptPayload.model_validate(snapshot.interrupts[0].value)
         return StartResult(thread_id=thread_id, status="interrupt", interrupt=payload)
     card = ConfirmedCard.model_validate(snapshot.values["card"])
     return StartResult(thread_id=thread_id, status="done", card=card)

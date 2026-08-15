@@ -10,9 +10,6 @@ from ditto_agent.schema import (
 )
 
 __all__ = [
-    "configure",
-    "start",
-    "resume",
     "AmbiguityItem",
     "ConfirmedCard",
     "ConflictResult",
@@ -20,4 +17,7 @@ __all__ = [
     "ExtractionResult",
     "InterruptPayload",
     "StartResult",
+    "configure",
+    "resume",
+    "start",
 ]

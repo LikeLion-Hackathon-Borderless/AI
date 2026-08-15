@@ -19,27 +19,30 @@ def test_happy_path_two_interrupts_then_card(monkeypatch):
 
     graph.invoke({"draft": draft, "context": context.model_dump()}, config=config)
     snapshot = graph.get_state(config)
-    assert snapshot.next
-    first = InterruptPayload.model_validate(snapshot.tasks[0].interrupts[0].value)
-    assert first.kind == "time_confirm"
+    assert snapshot.interrupts
+    first = InterruptPayload.model_validate(snapshot.interrupts[0].value)
+    assert (first.step, first.total) == (1, 2)
+    assert first.item.category == "TIME"
 
-    graph.invoke(Command(resume=first.candidates[0]), config=config)
+    graph.invoke(Command(resume=first.item.candidates[0]), config=config)
     snapshot = graph.get_state(config)
-    assert snapshot.next
-    second = InterruptPayload.model_validate(snapshot.tasks[0].interrupts[0].value)
-    assert second.kind == "interp_confirm"
+    assert snapshot.interrupts
+    second = InterruptPayload.model_validate(snapshot.interrupts[0].value)
+    assert (second.step, second.total) == (2, 2)
+    assert second.item.category == "REQUEST_INTENT"
 
-    graph.invoke(Command(resume=second.candidates[0]), config=config)
+    graph.invoke(Command(resume=second.item.candidates[0]), config=config)
     snapshot = graph.get_state(config)
-    assert not snapshot.next
+    assert not snapshot.interrupts
 
     card = ConfirmedCard.model_validate(snapshot.values["card"])
-    assert card.deadline_confirmed == first.candidates[0]
-    assert card.interpretation_note == second.candidates[0]
+    assert card.deadline_confirmed == first.item.candidates[0]
+    assert card.interpretation_note == second.item.candidates[0]
     assert card.conflict.within_working_hours is False  # LA 새벽 시간대
+    assert card.notes == []
 
 
-def test_no_ambiguity_skips_both_interrupts(monkeypatch):
+def test_no_ambiguity_skips_interrupt_entirely(monkeypatch):
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
     graph = build_graph()
     config = _config(str(uuid.uuid4()))
@@ -47,4 +50,8 @@ def test_no_ambiguity_skips_both_interrupts(monkeypatch):
 
     graph.invoke({"draft": "8/20 18:00 KST까지 리뷰 부탁드립니다.", "context": context.model_dump()}, config=config)
     snapshot = graph.get_state(config)
-    assert not snapshot.next  # 모호성 없으면 경고를 억제 — 바로 카드까지 진행
+    assert not snapshot.interrupts  # 모호성 없으면 경고를 억제 — 바로 카드까지 진행
+
+    card = ConfirmedCard.model_validate(snapshot.values["card"])
+    assert "까지" in card.deadline_confirmed
+    assert card.deadline_confirmed != "명시된 기한 없음"

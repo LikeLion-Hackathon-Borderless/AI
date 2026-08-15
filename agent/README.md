@@ -38,34 +38,36 @@ class StartResult:
 
 - `status == "interrupt"`: 화면에 `result.interrupt`를 보여주고, 사용자가 고른 답(또는
   직접 입력한 텍스트)을 `resume(result.thread_id, answer)`로 넘긴다. `answer`는
-  `result.interrupt.candidates` 중 하나를 그대로 넘기거나, 사용자가 직접 입력한 문자열을
-  넘겨도 된다(자유 입력 허용).
+  `result.interrupt.item.candidates` 중 하나를 그대로 넘기거나, 사용자가 직접 입력한
+  문자열을 넘겨도 된다(자유 입력 허용).
 - `status == "done"`: `result.card`가 최종 "공동 이해 카드" — 그대로 DB에 저장하고
   수신자 화면에 렌더링하면 된다.
-- 한 요청은 `thread_id` 하나로 끝까지 추적된다. `time_confirm` interrupt 한 번,
-  `interp_confirm` interrupt 한 번, 총 최대 2번 멈춘다(모호성이 없는 항목은 자동으로
-  건너뛴다 — "모호성이 없으면 경고를 억제" 원칙).
+- 한 요청은 `thread_id` 하나로 끝까지 추적된다. 추출된 모호성 개수만큼(보통 0~2개,
+  드물게 그 이상) 순서대로 멈춘다 — 모호성이 없으면 아예 멈추지 않고 바로 `done`
+  ("모호성이 없으면 경고를 억제" 원칙). `interrupt.step`/`total`로 진행률을 표시할 수
+  있다(예: "2/3 확인 중").
 
-### `InterruptPayload` (핸드오프 문서 5절 JSON 스키마와 1:1 대응)
+### `InterruptPayload` (핸드오프 문서 5절 JSON 스키마 기반)
 
 ```json
 {
-  "kind": "time_confirm",
-  "question": "'내일까지'의 정확한 기준 시각이 필요합니다 — 08/15 18:00 Asia/Seoul 기준으로 확정할까요?",
-  "candidates": ["2026-08-15T18:00:00+09:00", "custom"],
+  "step": 1,
+  "total": 2,
   "item": {
     "span": "내일까지",
     "category": "TIME",
     "reason": "상대적 기한 표현이라 기준 시각이 명시되지 않음",
     "candidates": ["2026-08-15T18:00:00+09:00", "custom"],
-    "suggestion": "'내일까지'의 정확한 기준 시각이 필요합니다 — ..."
+    "suggestion": "'내일까지'의 정확한 기준 시각이 필요합니다 — 08/15 18:00 Asia/Seoul 기준으로 확정할까요?"
   }
 }
 ```
 
-`kind`는 `"time_confirm"` 또는 `"interp_confirm"` 둘 중 하나. `time_confirm`의
-`candidates`는 **ISO8601 절대시각 문자열**(+ `"custom"` — 프론트에서 직접입력 UI로
-분기)이고, `interp_confirm`의 `candidates`는 **자연어 해석 문구**다.
+`item.category`가 `TIME`이면 `candidates`는 **ISO8601 절대시각 문자열**(+
+`"custom"` — 프론트에서 직접입력 UI로 분기), 그 외(`REQUEST_INTENT` /
+`DECISION_STATUS` / `OTHER`)는 **자연어 해석 문구**다. 네 카테고리 전부 동일한
+`InterruptPayload` 모양으로 온다 — 프론트는 `item.category`로 분기해서 렌더링하면
+된다.
 
 ### `ConfirmedCard` (최종 산출물)
 
@@ -78,6 +80,7 @@ class StartResult:
   "request_type": "검토 요청",
   "decision_status": "필수 반영",
   "interpretation_note": "현재 방향 유지 + 세부 보완 요청",
+  "notes": ["[OTHER] 침묵(응답 없음): 이의 없음(암묵적 동의)"],
   "conflict": {
     "receiver_local_time": "2026-08-15T02:00:00-07:00",
     "within_working_hours": false,
@@ -86,6 +89,12 @@ class StartResult:
   "evidence": "원문 그대로"
 }
 ```
+
+`deadline_confirmed`는 첫 번째 `TIME` 확인 답, `interpretation_note`는 첫 번째
+`REQUEST_INTENT` 확인 답, `decision_status`는 첫 번째 `DECISION_STATUS` 확인 답으로
+채워진다(없으면 C-2 추출값 그대로). 그 외(같은 카테고리가 여러 번 나오거나 `OTHER`)는
+전부 `notes`에 `"[카테고리] 원문 구간: 답변"` 형태로 쌓여 — 어떤 확인 항목도 조용히
+버려지지 않는다.
 
 ## 프로덕션 배선 (서버 시작 시 1번)
 
