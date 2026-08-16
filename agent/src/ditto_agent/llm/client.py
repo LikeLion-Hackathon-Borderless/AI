@@ -93,7 +93,10 @@ class LLMClient:
             # 하루 요청 수 자체가 막힌 상황에서 재시도는 성공 확률 없이 쿼터만 더 태우고
             # 호출 하나당 수십 초씩 조용히 늘어지게 만든다 — 빠르게 실패시키고 호출부
             # (eval/cli.py)가 그 실패를 눈에 보이게 처리하도록 한다.
-            self._client = OpenAI(api_key=api_key, max_retries=0)
+            # timeout=60.0 — SDK 기본 read timeout은 600초(10분)라, 서버가 느리게 응답하거나
+            # 큐잉하면 명확한 에러 없이 최대 10분간 조용히 멈춘다(2026-08-16 세션에서 실측
+            # 재현됨). 60초로 줄여서 느린 호출이 빨리 실패하고 호출부가 눈에 보이게 처리하게 함.
+            self._client = OpenAI(api_key=api_key, max_retries=0, timeout=60.0)
 
     def extract(self, draft: str, context: DraftContext) -> ExtractionResult:
         if self.mode == "mock":
