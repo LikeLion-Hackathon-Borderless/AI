@@ -87,7 +87,7 @@
       "pair_id": "D03",
       "note": "승인 vs 단순 수신 확인 — culture_criteria D03 패러프레이즈",
       "ambiguous": {"draft": "확인했습니다", "expected_categories": ["DECISION_STATUS"]},
-      "explicit": {"draft": "확인했고, 아직 검토 중입니다. 결정은 내일 드릴게요", "expected_categories": []}
+      "explicit": {"draft": "확인했고, 아직 검토 중입니다. 검토가 끝나는 대로 결정 드리겠습니다.", "expected_categories": []}
     },
     {
       "pair_id": "D04",
@@ -99,7 +99,7 @@
       "pair_id": "D05",
       "note": "보류 vs 완곡한 거절 — culture_criteria D05 패러프레이즈",
       "ambiguous": {"draft": "나중에 다시 얘기해요", "expected_categories": ["DECISION_STATUS"]},
-      "explicit": {"draft": "지금은 결정을 보류할게요. 다음 주 화요일 회의 때 다시 논의합시다", "expected_categories": []}
+      "explicit": {"draft": "지금은 결정을 보류할게요. 8월 25일 화요일 오후 2시(KST) 회의 때 다시 논의합시다.", "expected_categories": []}
     },
     {
       "pair_id": "C01",
