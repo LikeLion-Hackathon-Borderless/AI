@@ -501,3 +501,41 @@ F03/F04를 "모호함" 프레이밍에서 "국내수렴형"(국내는 이미 명
 조직/문화 기본값과의 충돌)으로 재작성. D02/D04, T01-05, F01/F02/F05/F06은 국내
 설문으로 "모호함 확인"이 실측 검증돼 문헌 근거 등급을 강화(T축은 "중"→"강" 상향).
 "검증 상태" 열 legend도 ✅모호/✅국내수렴 2종으로 재정의.
+
+## 2026-08-16 (밤) — 판단기준표를 실제 코드에 반영 + live eval 3-way 비교 시도
+
+plan mode로 설계 후 승인받아 진행. `agent/src/ditto_agent/llm/culture_criteria.py`
+16개 T/F/D 행 전부 `verified: True` 갱신, D01/D03/D05/F03/F04 5개의 `reason`을
+"국내수렴형" 프레이밍(설문 수치 인용)으로 교체 + `candidates` 순서를 설문 우세
+해석이 먼저 오도록 재정렬. `golden.json`은 검토만 하고 변경 안 함 — `expected_
+categories`가 "스키마상 해당 카테고리로 분기 가능한가"를 테스트하는 거라 국내
+컨센서스 여부와 무관하다는 결론(자세한 이유는 plan 파일 참고).
+
+`uv run ditto-eval`(golden 36케이스, gpt-5 live)로 코드 수정 전/후 비교:
+**baseline recall=0.810 precision=0.739 → reason-sync recall=0.905 precision=0.655**
+— reason 텍스트를 더 상세하게 보강했더니 recall은 크게 올랐지만(놓치는 게 줄어듦)
+precision은 떨어짐(REQUEST_INTENT/DECISION_STATUS에서 과탐지 증가). Recall-우선
+트레이드오프로 판단해 유지. 상세 수치는 `docs/survey-results-analysis.md` 8절.
+
+이어서 `prompts.py`의 few-shot 대표를 `{T01,T03,F01,F04,D01,D03}`(국내수렴형 4개
+포함)에서 `{T01,T04,F01,F02,D02,D04}`(설문에서 실제로 가장 크게 갈린 항목)로
+교체 — 근데 이 변경의 live 재측정은 **실패**. `ditto-eval`의 배치 호출
+(`client.extract_batch()`, 여러 케이스를 한 호출로 묶는 최적화)이 오늘 반복적으로
+원인 불명 상태로 무한 대기에 빠짐(RateLimitError 같은 명확한 예외 없이 그냥 응답
+안 옴) — batch-size/pace를 여러 번 조정하며 재시도했지만 매번 수십 분씩 걸리다
+막힘. 단건 호출(`client.extract()`)로 우회하면 개별 케이스는 16~50초 내 정상
+응답하는 걸 확인해 배치 경로 자체의 문제로 특정했지만, 재시도를 거듭하는 과정에서
+계정(gpt-5, TPM 10,000/분) 상태가 심하게 저하돼 마지막엔 케이스 하나에 9분 넘게
+걸려 중단. **allowlist 교체는 코드엔 반영됐고 테스트 28개·ruff는 통과하지만, 실측
+recall/precision은 다음 세션(계정 상태 회복 후)으로 미룸.**
+
+### Next
+
+- 다음 세션에서 계정 상태 회복 확인 후 allowlist-swap live eval 재시도, baseline/
+  reason-sync와 3-way 비교 완성.
+- `client.extract_batch()`가 왜 무한 대기에 빠지는지 원인 조사 — OpenAI Python
+  SDK에 명시적 `timeout` 파라미터가 없는 것도 관련 있어 보임(`client.py:96`의
+  `OpenAI(api_key=..., max_retries=0)`에 timeout 미설정). 재현되면 SDK 타임아웃
+  추가하는 것도 고려.
+- reason-sync의 recall↑/precision↓ 트레이드오프가 실제 제품 목표에 맞는지 팀
+  논의 필요(과확인 vs 누락 중 어느 쪽이 더 비싼 실수인지).

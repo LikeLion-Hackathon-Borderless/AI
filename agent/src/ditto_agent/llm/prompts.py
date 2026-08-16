@@ -14,7 +14,12 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 # 이후 정체되고, 과하면 모델이 산만해져 오히려 정확도가 떨어질 수 있다"는 문헌 근거로
 # 21개(양성 16 + 부정 5)에서 11개로 줄임 — 토큰도 같이 줄어 TPM 여유도 생김
 # (docs/research-few-shot-efficiency.md).
-_FEW_SHOT_ALLOWLIST = {"T01", "T03", "F01", "F04", "D01", "D03"}
+#
+# 2026-08-16 설문(docs/survey-results-analysis.md)으로 T03/F04/D01/D03이 "국내수렴형"
+# (국내 화자는 이미 한 해석으로 강하게 쏠림)이라는 게 확인돼, T04/F02/D02/D04(설문에서
+# 실제로 표준편차가 가장 컸던 = 국내에서도 진짜 갈리는 항목)로 교체 — 모호성 탐지
+# few-shot 신호를 더 선명하게 하려는 의도.
+_FEW_SHOT_ALLOWLIST = {"T01", "T04", "F01", "F02", "D02", "D04"}
 FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples(ids=_FEW_SHOT_ALLOWLIST)
 
 # culture_criteria.py 20개가 전부 "모호함" 양성 예시뿐이라, 골든셋 평가에서 명시적 문장까지
