@@ -575,13 +575,24 @@ timeout이 600초(10분)인데 `client.py`가 `timeout`을 명시 안 했던 것
 미룸 — 코드는 이미 다 준비돼서 재측정만 하면 됨. `docs/survey-results-analysis.md`
 9절에 상세 기록.
 
+**진짜 원인 나중에 발견**: 위에서 "간헐적 저하"라고 추정했던 것의 정체를 하드
+타임아웃(`_run_with_hard_timeout`, `eval/cli.py` — 스레드로 감싸서 몇 초든 무조건
+끊는 안전장치) 추가 후 격리 테스트하다가 찾음 — **`RateLimitError`: RPD(하루 요청
+한도) 50개를 이미 다 씀.** TPM도 서버 부하도 아니라 단순 하루 쿼터 고갈이었다.
+오늘 낮부터 반복한 측정·재시도들이 전부 이 카운터를 갉아먹었고, "몇 분씩 멈춘다"고
+느꼈던 현상 상당수도 한도에 가까워지며 요청이 지연된 결과였을 가능성이 큼. 배운
+점: 이상 현상 반복되면 로그 tail 대신 **최소 재현 스크립트로 원본 예외부터 확인**
+했어야 몇 시간 안 헤맸을 것 — `except Exception`으로 뭉뚱그려 잡던 습관 때문에
+진짜 에러 메시지를 늦게 봄.
+
 ### Next
 
-- 계정 상태 안정되면 `cd agent && PYTHONUNBUFFERED=1 DITTO_LLM_MODE=live uv run
-  ditto-eval --pace 5`(verify 포함)와 `--no-verify`(제외) 각각 실행해 verify-loop·
-  allowlist-swap 실측 숫자 채우기.
+- RPD가 rolling 24시간 창이라 시간 지나면서 풀림(429 메시지가 "28분 48초 후
+  재시도" 안내) — 그 이후 `cd agent && PYTHONUNBUFFERED=1 DITTO_LLM_MODE=live
+  uv run ditto-eval --pace 3`(verify 포함)와 `--no-verify`(제외) 각각 실행해
+  verify-loop·allowlist-swap 실측 숫자 채우기. 한도가 조금씩만 풀릴 수 있어 36케이스
+  한 번에 못 끝낼 수도 있음 — 캐시 덕분에 나눠서 이어가면 됨.
 - Phase 2(RAG 기반 동적 few-shot)는 Phase 1 실측 확인 후 착수 여부 판단 —
   plan 파일(`~/.claude/plans/whimsical-wandering-stroustrup.md`)에 설계 남아있음.
-- 오늘 반복된 "간헐적으로 20분씩 걸리는" 현상의 진짜 원인(계정 티어? 특정 시간대
-  혼잡? gpt-5 자체의 변동성?)은 아직 특정 못함 — OpenAI 대시보드에서 usage/latency
-  확인해보는 것도 다음 세션 후보.
+- RPD 50/day는 이 계정의 근본적 제약이라, 앞으로 eval을 자주 돌리려면 결제 수단
+  등록으로 한도를 올리는 것도 고려 대상(OpenAI 429 메시지가 안내하는 옵션).

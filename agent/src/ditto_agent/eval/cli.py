@@ -2,6 +2,8 @@ import argparse
 import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,12 +50,35 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+_HARD_TIMEOUT_SECONDS = 60.0
+
+
+def _run_with_hard_timeout(fn, *args, timeout: float = _HARD_TIMEOUT_SECONDS):
+    # client.py의 timeout=60.0(httpx read timeout)은 "마지막으로 뭔가 받은 시점부터"를 재는
+    # idle timeout이라, 서버가 부하 상태에서 keep-alive 바이트만 간간이 흘려보내고 응답을 안
+    # 끝내면 계속 갱신되기만 하고 절대 안 터진다(2026-08-17 세션에서 실측 — 단발 호출은 15초
+    # 만에 깔끔히 timeout 났는데, 같은 설정으로 부하 누적된 상태의 실제 eval 루프는 50분+
+    # 무한 대기). 스레드로 감싸서 "경과 시간이 얼마든 무조건 끊는" 하드 데드라인을 추가로 건다
+    # — 워커 스레드가 안 끝나도 메인 루프는 넘어간다(스레드는 백그라운드에 버려짐, eval
+    # 프로세스는 짧게 사는 CLI라 leak 걱정 없음).
+    # `with ThreadPoolExecutor(...)`을 안 쓰는 이유: context manager의 __exit__은
+    # shutdown(wait=True)를 호출해서 워커 스레드가 끝날 때까지 블록한다 — 그러면 스레드가
+    # 안 끝났을 때 여기서 다시 무한정 멈추게 돼 하드 타임아웃의 의미가 없어진다. 대신
+    # shutdown(wait=False)로 스레드를 안 기다리고 바로 버린다.
+    pool = ThreadPoolExecutor(max_workers=1)
+    future = pool.submit(fn, *args)
+    try:
+        return future.result(timeout=timeout)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _fetch_live_sequential(
     client: LLMClient, cases: list[GoldenCase], verify: bool, pace: float
 ) -> tuple[dict, bool]:
     # extract_batch()의 불안정성(위 --batch 도움말 참고) 때문에 기본 경로로 채택 — 케이스당
-    # 호출 1~2개(verify 포함 시)라 느리지만, client.py의 timeout=60.0 덕분에 느린 호출도
-    # 최악의 경우 60초 안에 실패하고 다음으로 넘어간다(오래 멈추는 대신 눈에 보이게 실패).
+    # 호출 1~2개(verify 포함 시)라 느리지만, 각 호출을 _run_with_hard_timeout으로 감싸서
+    # 어떤 이유로든 60초 넘게 멈추면 강제로 포기하고 다음 케이스로 넘어간다.
     results: dict[str, ExtractionResult] = {}
     aborted = False
     stage = "extract+verify" if verify else "extract"
@@ -61,12 +86,15 @@ def _fetch_live_sequential(
     for case in cases:
         ctx = DraftContext(**case.context)
         try:
-            r = client.extract(case.draft, ctx)
+            r = _run_with_hard_timeout(client.extract, case.draft, ctx)
             if verify:
-                r = r.model_copy(update={"ambiguities": client.verify(case.draft, r.ambiguities)})
+                verified = _run_with_hard_timeout(client.verify, case.draft, r.ambiguities)
+                r = r.model_copy(update={"ambiguities": verified})
             results[case.id] = r
             cache.save(case.draft, ctx, client.model, r, stage=stage)
             print(f"  {case.id}: ok", flush=True)
+        except FutureTimeoutError:
+            print(f"  {case.id}: FAILED (하드 타임아웃 {_HARD_TIMEOUT_SECONDS}초 초과, 스레드 방치하고 다음으로)", flush=True)
         except Exception as exc:  # noqa: BLE001 — 실패해도 이미 얻은 결과는 살리고 다음 케이스로
             print(f"  {case.id}: FAILED ({exc.__class__.__name__}) {str(exc)[:150]}", flush=True)
             if type(exc).__name__ == "RateLimitError":
