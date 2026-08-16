@@ -19,6 +19,13 @@ def test_mock_verify_handles_empty_list(monkeypatch):
     assert LLMClient().verify("8/20 18:00 KST까지 리뷰 부탁드립니다.", []) == []
 
 
+def test_mock_verify_batch_passes_each_case_through_unchanged(monkeypatch):
+    monkeypatch.setenv("DITTO_LLM_MODE", "mock")
+    items_a = [AmbiguityItem(span="a", category="TIME", reason="r", candidates=["c"], suggestion="s")]
+    result = LLMClient().verify_batch([("draft A", items_a), ("draft B", [])])
+    assert result == {0: items_a, 1: []}
+
+
 def test_graph_still_reaches_two_interrupts_with_verify_node_inserted(monkeypatch):
     # verify_ambiguities_node가 extract와 confirm_ambiguities 사이에 들어갔어도, mock
     # 모드에서는 필터링이 없으니 기존 happy-path(2번 interrupt)가 그대로 유지돼야 함.

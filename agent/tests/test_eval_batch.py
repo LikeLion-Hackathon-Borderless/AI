@@ -11,12 +11,14 @@ _RESULT_B = ExtractionResult(task="B", request_type="r", decision_status="d", am
 class _FakeClient:
     model = "fake-model"
 
-    def __init__(self, batch_response, extract_response=None, batch_error=None):
+    def __init__(self, batch_response, extract_response=None, batch_error=None, verify_batch_response=None):
         self._batch_response = batch_response
         self._extract_response = extract_response
         self._batch_error = batch_error
+        self._verify_batch_response = verify_batch_response
         self.batch_calls: list[list] = []
         self.extract_calls: list[str] = []
+        self.verify_batch_calls: list[list] = []
 
     def extract_batch(self, items):
         self.batch_calls.append(items)
@@ -27,6 +29,10 @@ class _FakeClient:
     def extract(self, draft, context):
         self.extract_calls.append(draft)
         return self._extract_response
+
+    def verify_batch(self, items):
+        self.verify_batch_calls.append(items)
+        return self._verify_batch_response
 
 
 def _case(case_id: str) -> GoldenCase:
@@ -114,4 +120,30 @@ def test_fetch_live_sequential_skips_verify_when_disabled(monkeypatch):
 
     assert not aborted
     assert client.verify_calls == 0
+    assert results["X"] == _RESULT_A  # verify 생략 — 1차 결과 그대로
+
+
+def test_fetch_live_batch_chains_verify_batch_when_enabled(monkeypatch):
+    monkeypatch.setattr(cache, "save", lambda *a, **k: None)
+    # extract_batch가 X에 후보 1개(_AMBIGUOUS_A)를 냈지만, verify_batch가 전부 걸러냄(빈 리스트)
+    client = _FakeClient(batch_response={0: _RESULT_A, 1: _RESULT_B}, verify_batch_response={0: [], 1: []})
+    cases = [_case("X"), _case("Y")]
+
+    results, aborted = _fetch_live_batch(client, cases, batch_size=10, pace=0, verify=True)
+
+    assert not aborted
+    assert len(client.verify_batch_calls) == 1  # 배치당 verify 호출도 1개로 고정
+    assert results["X"].ambiguities == []  # extract는 1개 냈지만 verify_batch가 걸러냄
+    assert results["Y"].ambiguities == []
+
+
+def test_fetch_live_batch_skips_verify_batch_when_disabled(monkeypatch):
+    monkeypatch.setattr(cache, "save", lambda *a, **k: None)
+    client = _FakeClient(batch_response={0: _RESULT_A, 1: _RESULT_B}, verify_batch_response={0: [], 1: []})
+    cases = [_case("X"), _case("Y")]
+
+    results, aborted = _fetch_live_batch(client, cases, batch_size=10, pace=0, verify=False)
+
+    assert not aborted
+    assert client.verify_batch_calls == []
     assert results["X"] == _RESULT_A  # verify 생략 — 1차 결과 그대로

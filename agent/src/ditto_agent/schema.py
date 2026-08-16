@@ -53,6 +53,15 @@ class BatchExtractionResult(BaseModel):
     items: list[BatchExtractionItem]
 
 
+class BatchAmbiguityItem(BaseModel):
+    index: int
+    ambiguities: list[AmbiguityItem]
+
+
+class BatchAmbiguityList(BaseModel):
+    items: list[BatchAmbiguityItem]
+
+
 class InterruptPayload(BaseModel):
     step: int
     total: int

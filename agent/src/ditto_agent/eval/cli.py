@@ -110,9 +110,15 @@ def _chunks(items: list, size: int):
         yield items[i : i + size]
 
 
-def _fetch_live_batch(client: LLMClient, cases: list[GoldenCase], batch_size: int, pace: float) -> tuple[dict, bool]:
+def _fetch_live_batch(
+    client: LLMClient, cases: list[GoldenCase], batch_size: int, pace: float, verify: bool = False
+) -> tuple[dict, bool]:
+    # verify=True면 배치 하나(extract) 끝날 때마다 그 배치 그대로 verify_batch()도 한 번 더
+    # 불러서 체이닝한다 — 케이스 수와 무관하게 배치당 요청 2개(extract+verify)로 고정되니
+    # RPD 절약 효과가 verify 없을 때와 동일한 비율로 유지된다.
     results: dict[str, ExtractionResult] = {}
     aborted = False
+    stage = "extract+verify" if verify else "extract"
 
     for batch in _chunks(cases, batch_size):
         print(f"batch({len(batch)}): {', '.join(c.id for c in batch)} ...", flush=True)
@@ -126,22 +132,40 @@ def _fetch_live_batch(client: LLMClient, cases: list[GoldenCase], batch_size: in
                 break
             batch_results = {}
 
+        batch_extractions: dict[str, ExtractionResult] = {}
         for i, case in enumerate(batch):
             if i in batch_results:
-                print(f"  {case.id}: ok")
-                results[case.id] = batch_results[i]
-                cache.save(case.draft, DraftContext(**case.context), client.model, batch_results[i])
+                batch_extractions[case.id] = batch_results[i]
             else:
                 print(f"  {case.id}: 배치 응답에 없음 — 개별 재시도 ...", end=" ", flush=True)
                 try:
-                    r = client.extract(case.draft, DraftContext(**case.context))
-                    results[case.id] = r
-                    cache.save(case.draft, DraftContext(**case.context), client.model, r)
+                    batch_extractions[case.id] = client.extract(case.draft, DraftContext(**case.context))
                     print("ok")
                 except Exception as exc2:  # noqa: BLE001
                     print(f"FAILED ({exc2.__class__.__name__})")
                     if type(exc2).__name__ == "RateLimitError":
                         aborted = True
+
+        if verify and not aborted and batch_extractions:
+            verify_items = [(case.draft, batch_extractions[case.id].ambiguities) for case in batch if case.id in batch_extractions]
+            verify_case_ids = [case.id for case in batch if case.id in batch_extractions]
+            try:
+                verified = client.verify_batch(verify_items)
+                for i, case_id in enumerate(verify_case_ids):
+                    if i in verified:
+                        batch_extractions[case_id] = batch_extractions[case_id].model_copy(
+                            update={"ambiguities": verified[i]}
+                        )
+            except Exception as exc:  # noqa: BLE001 — verify 실패해도 1차 extract 결과는 살린다
+                print(f"  verify_batch FAILED ({exc.__class__.__name__}): {str(exc)[:200]}")
+                if type(exc).__name__ == "RateLimitError":
+                    aborted = True
+
+        for case_id, extraction in batch_extractions.items():
+            print(f"  {case_id}: ok")
+            results[case_id] = extraction
+            case = next(c for c in batch if c.id == case_id)
+            cache.save(case.draft, DraftContext(**case.context), client.model, extraction, stage=stage)
 
         if aborted:
             break
@@ -185,7 +209,7 @@ def main(argv: list[str] | None = None) -> int:
             results[case.id] = r
     elif to_call:
         if args.batch:
-            live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace)
+            live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace, verify)
         else:
             live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace)
         results.update(live_results)

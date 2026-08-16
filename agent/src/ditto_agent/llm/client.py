@@ -3,9 +3,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ditto_agent.llm.prompts import (
+    BATCH_VERIFY_SYSTEM_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
     VERIFY_SYSTEM_PROMPT,
     build_batch_user_prompt,
+    build_batch_verify_user_prompt,
     build_system_prompt,
     build_translate_user_prompt,
     build_user_prompt,
@@ -14,6 +16,7 @@ from ditto_agent.llm.prompts import (
 from ditto_agent.schema import (
     AmbiguityItem,
     AmbiguityList,
+    BatchAmbiguityList,
     BatchExtractionResult,
     CardTranslation,
     DraftContext,
@@ -138,6 +141,37 @@ class LLMClient:
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
         return parsed.ambiguities
+
+    def verify_batch(self, items: list[tuple[str, list[AmbiguityItem]]]) -> dict[int, list[AmbiguityItem]]:
+        # verify()의 배치판 — extract_batch()와 같은 이유(RPD 절약)로 eval 전용.
+        # 항목이 아예 없는(ambiguities=[]) 케이스는 호출할 필요가 없어 결과에 미리 채워둠.
+        if self.mode == "mock":
+            return {i: ambiguities for i, (_, ambiguities) in enumerate(items)}
+
+        results: dict[int, list[AmbiguityItem]] = {}
+        entries = []
+        for i, (draft, ambiguities) in enumerate(items):
+            if not ambiguities:
+                results[i] = []
+                continue
+            entries.append((i, draft, [a.model_dump() for a in ambiguities]))
+
+        if not entries:
+            return results
+
+        completion = self._client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": BATCH_VERIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": build_batch_verify_user_prompt(entries)},
+            ],
+            response_format=BatchAmbiguityList,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
+        results.update({item.index: item.ambiguities for item in parsed.items})
+        return results
 
     def extract_batch(self, items: list[tuple[str, DraftContext]]) -> dict[int, ExtractionResult]:
         # 골든셋 평가처럼 서로 무관한 메시지 다수를 한 번에 처리할 때 씀 — 요청 수(RPD) 자체가

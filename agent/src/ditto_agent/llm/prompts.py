@@ -113,6 +113,25 @@ def build_verify_user_prompt(draft: str, ambiguities: list[dict]) -> str:
     return f"원문 메시지:\n{draft}\n\n1차 추출이 flag한 모호성 후보:\n{items}"
 
 
+BATCH_VERIFY_SYSTEM_PROMPT = f"""{VERIFY_SYSTEM_PROMPT}
+
+여러 개의 서로 무관한 메시지가 [index] 태그로 주어집니다. 각 메시지를 독립적으로
+재검토하고(서로 참조하지 마세요), 응답은 {{items: [{{index, ambiguities}}]}} 형태로
+주어진 메시지 개수만큼 정확히 하나씩 포함하세요. 순서는 상관없지만 index는 절대
+빠뜨리거나 중복하지 마세요."""
+
+
+def build_batch_verify_user_prompt(entries: list[tuple[int, str, list[dict]]]) -> str:
+    # entries: (index, draft, ambiguities)
+    blocks = []
+    for i, draft, ambiguities in entries:
+        items = "\n".join(
+            f"  - span: {a['span']!r} / category: {a['category']} / reason: {a['reason']}" for a in ambiguities
+        )
+        blocks.append(f"[{i}] 원문 메시지: {draft}\n1차 추출이 flag한 모호성 후보:\n{items}")
+    return "\n\n".join(blocks)
+
+
 TRANSLATE_SYSTEM_PROMPT = """이미 발신자가 모호성 확인까지 끝낸, 확정된 업무 조건 필드를
 번역합니다. 뜻을 바꾸거나 새로 해석하지 말고 있는 그대로 옮기세요 — 모호성 해석은 이미
 끝났으므로 여기서 다른 뜻으로 번역하면 안 됩니다. task/request_type/interpretation_note/
