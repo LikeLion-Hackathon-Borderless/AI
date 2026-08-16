@@ -18,6 +18,13 @@ def extract_node(state: GraphState) -> dict:
     return {"extraction": result.model_dump()}
 
 
+def verify_ambiguities_node(state: GraphState) -> dict:
+    extraction = ExtractionResult.model_validate(state["extraction"])
+    verified = LLMClient().verify(state["draft"], extraction.ambiguities)
+    updated = extraction.model_copy(update={"ambiguities": verified})
+    return {"extraction": updated.model_dump()}
+
+
 def confirm_ambiguities_node(state: GraphState) -> dict:
     extraction = ExtractionResult.model_validate(state["extraction"])
     total = len(extraction.ambiguities)

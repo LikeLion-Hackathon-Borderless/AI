@@ -21,19 +21,60 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--only", type=str, default=None, help="이 문자열을 id에 포함하는 케이스만 실행 (예: T01)")
     parser.add_argument("--no-cache", action="store_true", help="live 모드에서도 캐시를 쓰지 않고 매번 새로 호출")
     parser.add_argument(
+        "--no-verify",
+        action="store_true",
+        help="extract() 1차 결과만 측정하고 verify() 2차 필터링을 생략 — reason-sync 등 verify"
+        " 이전 실험과 비교할 때 씀. 기본은 verify 적용.",
+    )
+    parser.add_argument(
+        "--batch",
+        action="store_true",
+        help="2026-08-16 세션에서 client.extract_batch()가 원인 불명으로 반복 무한 대기에"
+        " 빠지는 걸 확인함(docs/progress.md) — 기본은 단건 extract()+verify() 순차 호출."
+        " 이 플래그로 예전 배치 경로를 켤 수 있지만 불안정하다고 알려져 있음.",
+    )
+    parser.add_argument(
         "--batch-size",
         type=int,
         default=10,
-        help="live 모드에서 호출 한 번에 묶어 보낼 케이스 수 — 요청 수(RPD) 자체가 쿼터인 계정에서는"
-        " 이걸 늘리면 호출 횟수가 줄어든다. 응답에서 누락된 항목은 개별 호출로 폴백",
+        help="--batch일 때만 씀 — 호출 한 번에 묶어 보낼 케이스 수. 응답에서 누락된 항목은 개별 호출로 폴백",
     )
     parser.add_argument(
         "--pace",
         type=float,
         default=float(os.getenv("DITTO_EVAL_PACE_SECONDS", "2.0")),
-        help="live 모드에서 배치 호출 사이 대기 시간(초) — 분당 요청 한도(RPM) 회피용",
+        help="live 모드에서 호출 사이 대기 시간(초) — 분당 요청 한도(TPM/RPM) 회피용",
     )
     return parser.parse_args(argv)
+
+
+def _fetch_live_sequential(
+    client: LLMClient, cases: list[GoldenCase], verify: bool, pace: float
+) -> tuple[dict, bool]:
+    # extract_batch()의 불안정성(위 --batch 도움말 참고) 때문에 기본 경로로 채택 — 케이스당
+    # 호출 1~2개(verify 포함 시)라 느리지만, client.py의 timeout=60.0 덕분에 느린 호출도
+    # 최악의 경우 60초 안에 실패하고 다음으로 넘어간다(오래 멈추는 대신 눈에 보이게 실패).
+    results: dict[str, ExtractionResult] = {}
+    aborted = False
+    stage = "extract+verify" if verify else "extract"
+
+    for case in cases:
+        ctx = DraftContext(**case.context)
+        try:
+            r = client.extract(case.draft, ctx)
+            if verify:
+                r = r.model_copy(update={"ambiguities": client.verify(case.draft, r.ambiguities)})
+            results[case.id] = r
+            cache.save(case.draft, ctx, client.model, r, stage=stage)
+            print(f"  {case.id}: ok", flush=True)
+        except Exception as exc:  # noqa: BLE001 — 실패해도 이미 얻은 결과는 살리고 다음 케이스로
+            print(f"  {case.id}: FAILED ({exc.__class__.__name__}) {str(exc)[:150]}", flush=True)
+            if type(exc).__name__ == "RateLimitError":
+                aborted = True
+                break
+        time.sleep(pace)
+
+    return results, aborted
 
 
 def _chunks(items: list, size: int):
@@ -41,7 +82,7 @@ def _chunks(items: list, size: int):
         yield items[i : i + size]
 
 
-def _fetch_live(client: LLMClient, cases: list[GoldenCase], batch_size: int, pace: float) -> tuple[dict, bool]:
+def _fetch_live_batch(client: LLMClient, cases: list[GoldenCase], batch_size: int, pace: float) -> tuple[dict, bool]:
     results: dict[str, ExtractionResult] = {}
     aborted = False
 
@@ -92,13 +133,15 @@ def main(argv: list[str] | None = None) -> int:
         cases = cases[: args.limit]
 
     client = LLMClient()
+    verify = not args.no_verify
+    stage = "extract+verify" if verify else "extract"
     results: dict[str, ExtractionResult] = {}
     to_call = cases
 
     if client.mode == "live" and not args.no_cache:
         to_call = []
         for case in cases:
-            hit = cache.load(case.draft, DraftContext(**case.context), client.model)
+            hit = cache.load(case.draft, DraftContext(**case.context), client.model, stage=stage)
             if hit is not None:
                 results[case.id] = hit
             else:
@@ -108,9 +151,15 @@ def main(argv: list[str] | None = None) -> int:
     aborted = False
     if client.mode == "mock":
         for case in to_call:
-            results[case.id] = client.extract(case.draft, DraftContext(**case.context))
+            r = client.extract(case.draft, DraftContext(**case.context))
+            if verify:
+                r = r.model_copy(update={"ambiguities": client.verify(case.draft, r.ambiguities)})
+            results[case.id] = r
     elif to_call:
-        live_results, aborted = _fetch_live(client, to_call, args.batch_size, args.pace)
+        if args.batch:
+            live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace)
+        else:
+            live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace)
         results.update(live_results)
 
     scores = []

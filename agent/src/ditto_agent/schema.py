@@ -31,6 +31,10 @@ class AmbiguityItem(BaseModel):
     suggestion: str
 
 
+class AmbiguityList(BaseModel):
+    ambiguities: list[AmbiguityItem]
+
+
 class ExtractionResult(BaseModel):
     task: str
     assignee: str | None = None

@@ -90,6 +90,29 @@ def build_batch_user_prompt(entries: list[tuple[int, str, str, str, str]]) -> st
     return "\n\n".join(blocks)
 
 
+# 2026-08-16 reason-sync 실험(docs/survey-results-analysis.md 8절)으로 recall은 올랐지만
+# (0.810→0.905) precision이 떨어짐(0.739→0.655) — REQUEST_INTENT/DECISION_STATUS에서
+# 명시적 문장까지 과탐지. 1차 추출 뒤에 회의적으로 재검토하는 2차 호출을 추가해 과탐지만
+# 골라 제거한다(새 항목 추가는 금지 — 1차 결과의 부분집합만 반환하게 해서 recall 손실 방지).
+VERIFY_SYSTEM_PROMPT = """당신은 1차 추출이 flag한 "모호성 후보" 목록을 회의적으로 재검토하는
+검수자입니다.
+
+- 원문을 다시 읽고, 각 후보가 **진짜로 여러 해석이 가능한지** 판단하세요.
+- 이미 문장 안에 명시적 조건(구체적 날짜/시각, "최종", "필수", "그대로 진행" 같은 확정 표현)이
+  있어서 실제로는 헷갈릴 여지가 없다면 그 후보는 제거하세요.
+- 정말 모호한 후보만 남기세요 — span/category/reason/candidates/suggestion 내용은 그대로
+  유지합니다(다시 쓰지 마세요).
+- **새 후보를 추가하지 마세요** — 1차 목록의 부분집합만 반환합니다. 전부 진짜 모호하면 그대로
+  전부 반환하고, 전부 아니면 빈 리스트를 반환하세요."""
+
+
+def build_verify_user_prompt(draft: str, ambiguities: list[dict]) -> str:
+    items = "\n".join(
+        f"- span: {a['span']!r} / category: {a['category']} / reason: {a['reason']}" for a in ambiguities
+    )
+    return f"원문 메시지:\n{draft}\n\n1차 추출이 flag한 모호성 후보:\n{items}"
+
+
 TRANSLATE_SYSTEM_PROMPT = """이미 발신자가 모호성 확인까지 끝낸, 확정된 업무 조건 필드를
 번역합니다. 뜻을 바꾸거나 새로 해석하지 말고 있는 그대로 옮기세요 — 모호성 해석은 이미
 끝났으므로 여기서 다른 뜻으로 번역하면 안 됩니다. task/request_type/interpretation_note/

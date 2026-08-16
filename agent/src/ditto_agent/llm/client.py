@@ -4,13 +4,16 @@ from zoneinfo import ZoneInfo
 
 from ditto_agent.llm.prompts import (
     TRANSLATE_SYSTEM_PROMPT,
+    VERIFY_SYSTEM_PROMPT,
     build_batch_user_prompt,
     build_system_prompt,
     build_translate_user_prompt,
     build_user_prompt,
+    build_verify_user_prompt,
 )
 from ditto_agent.schema import (
     AmbiguityItem,
+    AmbiguityList,
     BatchExtractionResult,
     CardTranslation,
     DraftContext,
@@ -115,6 +118,26 @@ class LLMClient:
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
         return parsed
+
+    def verify(self, draft: str, ambiguities: list[AmbiguityItem]) -> list[AmbiguityItem]:
+        # 1차 extract()가 flag한 후보를 회의적으로 재검토해 과탐지를 제거하는 2차 호출.
+        # mock 모드는 필터링 없이 그대로 통과 — 회귀 테스트에서 그래프 배선만 확인하면 되고,
+        # mock 추출기 자체가 이미 최소한의 후보만 내므로 걸러낼 게 없음.
+        if self.mode == "mock" or not ambiguities:
+            return ambiguities
+
+        completion = self._client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": VERIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": build_verify_user_prompt(draft, [a.model_dump() for a in ambiguities])},
+            ],
+            response_format=AmbiguityList,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
+        return parsed.ambiguities
 
     def extract_batch(self, items: list[tuple[str, DraftContext]]) -> dict[int, ExtractionResult]:
         # 골든셋 평가처럼 서로 무관한 메시지 다수를 한 번에 처리할 때 씀 — 요청 수(RPD) 자체가
