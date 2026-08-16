@@ -326,3 +326,37 @@ confidence_gate.py`(계층화 샘플링 + 사람 블라인드 라벨 + 90/80/100
 
 - 한도 풀리면 `uv run ditto-eval`(이제 40콜이 아니라 4콜) 한 번으로 전체 재실행,
   실제 precision/recall 확정 — 위 항목과 동일하게 여전히 미해결.
+
+---
+
+## 2026-08-16 (계속) — 골든셋 40/40 완주, 첫 확정 수치
+
+### Done
+
+`--pace 65`로 TPM 한도를 피해 gpt-5 4배치(10개씩) 전부 성공, **40/40 완주**:
+
+| 카테고리 | Recall | Precision |
+|---|---|---|
+| 전체 | 88% (21/24) | 84% (21/25) |
+| TIME | 100% | 73% (FP 3) |
+| REQUEST_INTENT | 100% | 100% |
+| DECISION_STATUS | 100% | 86% (FP 1) |
+| OTHER | **0%** (FN 3) | N/A |
+
+오답 6개 중 4개(T02/D03/D05-explicit)를 다시 보니 **골든셋 라벨 실수**였음 — D03/D05는
+DECISION_STATUS 대조군으로 쓴 문장에 "내일"/"다음 주 화요일" 같은 상대 시간 표현을
+무심코 남겨놔서, 모델이 TIME으로 잡은 게 정확한 판단인데 오답으로 채점된 것. TIME/
+REQUEST_INTENT/DECISION_STATUS는 사실상 정밀도 문제가 없다고 봐도 됨.
+
+**진짜 남은 문제는 OTHER 카테고리 3/3 전부 놓친 것** — 이전에 발견해둔 "`prompts.py`의
+few-shot이 C01-04(패턴 설명, 실제 발화 아님)를 예시 입력인 것처럼 그대로 쓰고 있다"는
+가설이 이 실측 결과로 뒷받침됨.
+
+### Next
+
+- **최우선**: `culture_criteria.py`의 C01-04 few-shot을 실제 발화 예시로 다시 쓰기
+  (golden.json의 C01-03 explicit/ambiguous 작성할 때 이미 했던 것과 같은 작업 —
+  prompts.py 쪽만 안 고쳐져 있었음).
+- D03/D05 golden.json 라벨도 상대 시간 표현 제거해서 재검증(지금은 오답으로 잘못
+  카운트됨 — 진짜 precision은 84%보다 높을 것).
+- OTHER 고친 뒤 `uv run ditto-eval`(4콜) 재실행해서 최종 확정.
