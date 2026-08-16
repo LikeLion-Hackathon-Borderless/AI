@@ -596,3 +596,43 @@ timeout이 600초(10분)인데 `client.py`가 `timeout`을 명시 안 했던 것
   plan 파일(`~/.claude/plans/whimsical-wandering-stroustrup.md`)에 설계 남아있음.
 - RPD 50/day는 이 계정의 근본적 제약이라, 앞으로 eval을 자주 돌리려면 결제 수단
   등록으로 한도를 올리는 것도 고려 대상(OpenAI 429 메시지가 안내하는 옵션).
+
+## 2026-08-17 (계속) — gpt-5-mini 전환 + 배치 verify + 최종 3-way 비교, 세션 마무리
+
+사용자가 계정 rate-limits 대시보드를 공유 — gpt-5가 전 모델 중 TPM/RPM 최저(10,000/3)
+이고 **RPD는 모델별 별도 풀**이라는 게 확정됨. `DITTO_OPENAI_MODEL`을 `gpt-5-mini`
+(TPM 60,000·RPM 10)로 전환(`.env`, `.env.example` 코멘트도 이전의 잘못된 추정 수정).
+
+"RPD 안 걸리게 배치 최적화" 요청에 맞춰 `LLMClient.verify_batch()` 신설(배치당
+extract+verify 2호출로 고정, 케이스 수와 무관) — `schema.BatchAmbiguityList`,
+`prompts.BATCH_VERIFY_SYSTEM_PROMPT`, `eval/cli.py`의 `_fetch_live_batch`가 `verify`
+인자를 받아 체이닝. 36케이스가 배치 크기 12로 요청 3~6개에 끝남. 테스트 36개 통과.
+
+gpt-5-mini로 no-verify(reason-sync+allowlist-swap)와 verify 포함 두 조건을 배치로
+완주(중간에 배치 호출이 `APITimeoutError`로 2번 실패했지만 개별 재시도 폴백이 정상
+작동해 자동 복구):
+- no-verify: recall=0.905, precision=0.679 (`outputs/eval/20260816T164043Z`)
+- verify 포함: recall=0.952, precision=**0.500** (`outputs/eval/20260816T165940Z`)
+
+**verify-loop 기각 결정**: 설계 의도와 반대로 precision이 0.679→0.500으로
+악화됨(FP 9→20건). `graph/build.py`의 `build_graph()`에 `use_verify: bool = False`
+파라미터 추가해 **기본 파이프라인에서 verify_ambiguities_node를 뺐다** — 노드/
+`LLMClient.verify()`/`verify_batch()` 코드와 테스트는 그대로 남겨두고(향후 프롬프트
+재튜닝 시 `use_verify=True`로 재활성화 가능), `interface.configure()`에도 같은
+플래그 노출. `eval/cli.py`도 `--no-verify` → `--verify`(opt-in, 기본 꺼짐)로 뒤집어
+프로덕션 기본값과 일치시킴. mock 모드로 전체 파이프라인(start→resume→resume→card)
+end-to-end 스모크 테스트 통과 확인.
+
+상세 수치·해석은 `docs/survey-results-analysis.md` 10절.
+
+### 최종 상태 요약 (다음 세션 시작점)
+
+- **채택된 것**: Phase 0(timeout=60.0), reason-sync(culture_criteria.py 16개 항목
+  동기화), allowlist-swap(few-shot 대표 4개 교체), gpt-5-mini 모델 전환, 배치
+  extract/verify 인프라
+- **구현됐지만 기본 꺼짐**: verify-loop(`use_verify=True`로 옵션 가능, 프롬프트
+  재튜닝 필요)
+- **미착수**: Phase 2(RAG 기반 동적 few-shot) — plan 파일에 설계만 있음
+- 전체 커밋: `19f7fad`(timeout) → `f9aa3e5`(verify 최초 구현) → `9ebcdfe`(하드
+  타임아웃+RPD 원인 규명) → `a261927`(배치 verify+모델 전환) → `ee45301`(verify
+  기본 끔) — PR #1에 전부 반영, push 완료.
