@@ -14,6 +14,24 @@ uv run pytest
 uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐름 확인
 ```
 
+## 트랙 경계(Border) 대응
+
+멋쟁이사자처럼 트랙(지리/언어/문화/조직 4개 경계) 기준으로 이 패키지가 실제로 커버하는
+범위:
+
+| Border | 대응 | 새 UI 필요? |
+|---|---|---|
+| 지리 | TIME 카테고리 + `graph/conflict.py`(근무시간 충돌) | 아니오 — 기존 카드의 `기한` 필드 |
+| 문화 | REQUEST_INTENT(완곡한 반대 등, 문헌 검증 가장 탄탄함) | 아니오 |
+| 조직 | DECISION_STATUS를 `DECISION_STATUS_VOCABULARY`(최종 확정/임시 시도/1차 완료/제안/보류/미정) 6개로 **정규화** — "승인"/"완료"/"컨펌"의 조직별 뜻 차이를 흡수 | 아니오 — 기존 `결정 상태` 필드 |
+| 언어 | `DraftContext.receiver_lang` 설정 시 `translate_card_node`가 카드의 자유 텍스트(`task`/`request_type`/`interpretation_note`/`notes`)만 번역, 구조화된 값(타임스탬프·정규화된 상태)은 안 건드림 | 아니오 — 같은 카드 필드, 값만 로컬라이즈 |
+| ~~Communicating(OTHER)~~ | **의도적으로 제외** — 골든셋 40/40 완주 결과 recall 0/3, 문헌 조사로도 "간접화법/톤 해석은 최고 성능 LLM도 사람 수준 미달"이 확인돼(`docs/research-other-category.md`) 이번 스코프에서 뺐다 | - |
+
+**번역은 모호성 확정 *이후*에만 한다** — 먼저 번역하면 번역기가 여러 해석 중 하나를
+암묵적으로 골라버려서, 발신자가 명시적으로 확정하기 전에 모호성이 사라져버린다(이
+프로젝트의 핵심 원칙 위반). `evidence`(원문)는 번역 안 하고 그대로 둔다 — 원문 확인이
+필요하면 그쪽을 보면 됨.
+
 ## 골든셋 평가 (`ditto-eval`)
 
 ```bash
@@ -49,7 +67,10 @@ from ditto_agent.schema import DraftContext
 
 result = start(
     draft="이 부분 검토 부탁드려요. 내일까지 조금 더 고민해 보면 좋을 것 같아요.",
-    context=DraftContext(sender_tz="Asia/Seoul", receiver_tz="America/Los_Angeles", receiver_name="Alex"),
+    context=DraftContext(
+        sender_tz="Asia/Seoul", receiver_tz="America/Los_Angeles", receiver_name="Alex",
+        receiver_lang="en",  # 생략하면 카드가 번역 없이 원문 언어 그대로 나감
+    ),
 )
 ```
 
@@ -157,7 +178,10 @@ ConflictResult` — `agent/src/ditto_agent/graph/conflict.py`의 `default_confli
 
 ## 아직 안 채운 부분
 
-- `docs/문화_판단기준표_초안.md`가 placeholder — 채워지면
-  `src/ditto_agent/llm/prompts.py`의 `FEW_SHOT_EXAMPLES`에 반영.
+- `docs/문화_판단기준표_초안.md` 20개 항목은 전부 미검증(☐) 가설 — `docs/
+  research-tfd-validation.md`가 문헌 기반 1차 검증 결과 정리(F축 가장 탄탄, D축
+  가장 약함). 실제 인터뷰/설문 검증은 아직 안 됨.
 - `graph/conflict.py`의 `default_conflict_checker`는 진짜 근무시간표/공휴일을 모른다
   — 프로덕션에서는 반드시 `configure(conflict_checker=...)`로 교체.
+- `translate_card_node`는 카드 필드만 번역 — 채팅 스레드의 개별 메시지 번역은 스코프
+  밖(팀원 프론트 쪽 관심사일 수 있음).

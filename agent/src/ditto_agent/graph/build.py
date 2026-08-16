@@ -8,6 +8,7 @@ from ditto_agent.graph.nodes import (
     confirm_ambiguities_node,
     extract_node,
     make_conflict_check_node,
+    translate_card_node,
 )
 from ditto_agent.graph.state import GraphState
 
@@ -21,11 +22,13 @@ def build_graph(
     graph.add_node("confirm_ambiguities", confirm_ambiguities_node)
     graph.add_node("conflict_check", make_conflict_check_node(conflict_checker or default_conflict_checker))
     graph.add_node("build_card", build_card_node)
+    graph.add_node("translate_card", translate_card_node)
 
     graph.set_entry_point("extract")
     graph.add_edge("extract", "confirm_ambiguities")
     graph.add_edge("confirm_ambiguities", "conflict_check")
     graph.add_edge("conflict_check", "build_card")
-    graph.add_edge("build_card", END)
+    graph.add_edge("build_card", "translate_card")
+    graph.add_edge("translate_card", END)
 
     return graph.compile(checkpointer=checkpointer or MemorySaver())

@@ -1,4 +1,5 @@
 from ditto_agent.llm.culture_criteria import as_few_shot_examples
+from ditto_agent.schema import DECISION_STATUS_VOCABULARY
 
 SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 의도·결정 상태의 모호성을 발견해,
 발신자가 스스로 명시적으로 확정하도록 돕는 비서입니다.
@@ -8,9 +9,11 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 - 시간 표현은 임의로 확정하지 말고, 확인이 필요한 후보 시각을 제시하세요.
 - 의미가 여러 갈래로 읽히는 표현은 실제 의도를 발신자가 고르도록 후보 해석을 제시하세요."""
 
-# docs/문화_판단기준표_초안.md 20개 항목(T01-05/F01-06/D01-05/C01-04, 전부 미검증) 전체를
-# 구조화한 것 — RAG 불필요, 20개면 컨텍스트 윈도우 안에 들어가는 양(문서 5절 원칙).
-FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples()
+# docs/문화_판단기준표_초안.md 20개 항목(T01-05/F01-06/D01-05/C01-04, 전부 미검증) 중
+# OTHER(C01-04)는 제외 — 골든셋에서 recall 0/3, 문헌 조사로도 "간접화법/톤 해석은 최고
+# 성능 LLM도 사람 수준에 못 미치는 구조적 약점"(docs/research-other-category.md)임을
+# 확인해 이번 스코프에서 뺐다. TIME/REQUEST_INTENT/DECISION_STATUS 3개만 정식 지원.
+FEW_SHOT_EXAMPLES: list[dict] = [ex for ex in as_few_shot_examples() if ex["ambiguity"]["category"] != "OTHER"]
 
 # culture_criteria.py 20개가 전부 "모호함" 양성 예시뿐이라, 골든셋 평가에서 명시적 문장까지
 # 전부 오탐(precision 0.51)하는 걸 확인함 — 부정 예시가 하나도 없어 "항상 뭔가는 모호하다"는
@@ -23,17 +26,21 @@ NEGATIVE_FEW_SHOT_EXAMPLES: list[str] = [
     "오늘 회의는 예정대로 3시에 진행됩니다.",
 ]
 
-OUTPUT_SCHEMA_NOTE = """다음 필드를 가진 JSON으로만 응답하세요:
+OUTPUT_SCHEMA_NOTE = f"""다음 필드를 가진 JSON으로만 응답하세요:
 task, assignee(nullable), deadline_raw(nullable), request_type, decision_status,
-ambiguities(list of {span, category(TIME|REQUEST_INTENT|DECISION_STATUS|OTHER), reason,
-candidates, suggestion}).
+ambiguities(list of {{span, category(TIME|REQUEST_INTENT|DECISION_STATUS), reason,
+candidates, suggestion}}).
 
 - category가 TIME인 항목의 candidates는 반드시 ISO8601 절대시각 문자열이어야 합니다
   (예: "2026-08-16T18:00:00+09:00"). 설명 문장을 넣지 마세요 — 프론트가 이 값을 그대로
   파싱해서 화면에 포맷하고, 수신자 시간대 변환·근무시간 충돌 검사에도 그대로 씁니다.
   직접 입력을 허용하려면 candidates에 문자열 "custom"을 추가하세요.
 - 같은 원문 구간(span)에서 나온 모호성이 시간 관련이면 TIME 항목 하나로 합치세요 —
-  "정확한 시각"과 "필수 여부"처럼 관련된 질문을 별도 ambiguity 항목으로 쪼개지 마세요."""
+  "정확한 시각"과 "필수 여부"처럼 관련된 질문을 별도 ambiguity 항목으로 쪼개지 마세요.
+- decision_status는 발신자/수신자가 서로 다른 조직(회사·팀) 소속이라 "완료"/"승인"/
+  "컨펌" 같은 말의 뜻이 다를 수 있다는 전제로, 다음 중 하나로 **정규화**해서 쓰세요
+  (원문 그대로 옮기지 말 것): {", ".join(DECISION_STATUS_VOCABULARY)}. 모호하면
+  DECISION_STATUS 카테고리로 ambiguities에 추가해 확인받으세요."""
 
 
 def build_system_prompt(batch: bool = False) -> str:
@@ -74,3 +81,19 @@ def build_batch_user_prompt(entries: list[tuple[int, str, str, str, str]]) -> st
         for i, draft, sender_tz, receiver_tz, now_iso in entries
     ]
     return "\n\n".join(blocks)
+
+
+TRANSLATE_SYSTEM_PROMPT = """이미 발신자가 모호성 확인까지 끝낸, 확정된 업무 조건 필드를
+번역합니다. 뜻을 바꾸거나 새로 해석하지 말고 있는 그대로 옮기세요 — 모호성 해석은 이미
+끝났으므로 여기서 다른 뜻으로 번역하면 안 됩니다. task/request_type/interpretation_note/
+notes 필드만 응답하세요(다른 필드 없음)."""
+
+
+def build_translate_user_prompt(task: str, request_type: str, interpretation_note: str | None, notes: list[str], target_lang: str) -> str:
+    return (
+        f"다음 필드들을 언어 코드 '{target_lang}'로 번역하세요:\n"
+        f"task: {task}\n"
+        f"request_type: {request_type}\n"
+        f"interpretation_note: {interpretation_note}\n"
+        f"notes: {notes}"
+    )

@@ -3,13 +3,16 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from ditto_agent.llm.prompts import (
+    TRANSLATE_SYSTEM_PROMPT,
     build_batch_user_prompt,
     build_system_prompt,
+    build_translate_user_prompt,
     build_user_prompt,
 )
 from ditto_agent.schema import (
     AmbiguityItem,
     BatchExtractionResult,
+    CardTranslation,
     DraftContext,
     ExtractionResult,
 )
@@ -134,3 +137,33 @@ class LLMClient:
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
         return {item.index: item.extraction for item in parsed.items}
+
+    def translate_card_fields(
+        self, task: str, request_type: str, interpretation_note: str | None, notes: list[str], target_lang: str
+    ) -> CardTranslation:
+        # 확정된 카드의 자유 텍스트만 옮긴다 — deadline/decision_status/timestamp 등 구조화된
+        # 필드는 그대로 둔다(숫자·고정 어휘는 번역 대상이 아니라 프론트 로컬라이즈 대상).
+        if self.mode == "mock":
+            prefix = f"[{target_lang}] "
+            return CardTranslation(
+                task=prefix + task,
+                request_type=prefix + request_type,
+                interpretation_note=(prefix + interpretation_note) if interpretation_note else None,
+                notes=[prefix + n for n in notes],
+            )
+
+        completion = self._client.chat.completions.parse(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": TRANSLATE_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": build_translate_user_prompt(task, request_type, interpretation_note, notes, target_lang),
+                },
+            ],
+            response_format=CardTranslation,
+        )
+        parsed = completion.choices[0].message.parsed
+        if parsed is None:
+            raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
+        return parsed

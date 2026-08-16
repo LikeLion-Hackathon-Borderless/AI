@@ -78,3 +78,23 @@ def build_card_node(state: GraphState) -> dict:
         evidence=state["draft"],
     )
     return {"card": card.model_dump()}
+
+
+def translate_card_node(state: GraphState) -> dict:
+    context = DraftContext.model_validate(state["context"])
+    if not context.receiver_lang:
+        return {}  # Border 02(언어) 대상 아님 — 카드 그대로 둠
+
+    card = ConfirmedCard.model_validate(state["card"])
+    translation = LLMClient().translate_card_fields(
+        card.task, card.request_type, card.interpretation_note, card.notes, context.receiver_lang
+    )
+    translated = card.model_copy(
+        update={
+            "task": translation.task,
+            "request_type": translation.request_type,
+            "interpretation_note": translation.interpretation_note,
+            "notes": translation.notes,
+        }
+    )
+    return {"card": translated.model_dump()}

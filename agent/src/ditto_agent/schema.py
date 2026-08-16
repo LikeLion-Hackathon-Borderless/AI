@@ -5,11 +5,22 @@ from pydantic import BaseModel, Field
 AmbiguityCategory = Literal["TIME", "REQUEST_INTENT", "DECISION_STATUS", "OTHER"]
 
 
+DECISION_STATUS_VOCABULARY: tuple[str, ...] = (
+    "최종 확정",
+    "임시 시도(재논의 가능)",
+    "1차 완료(추가 승인 필요)",
+    "제안(결정 아님)",
+    "보류",
+    "미정",
+)
+
+
 class DraftContext(BaseModel):
     sender_tz: str = "Asia/Seoul"
     receiver_tz: str = "America/Los_Angeles"
     receiver_name: str | None = None
     now_iso: str | None = None  # sender's current local time; interface.start() fills this in if omitted
+    receiver_lang: str | None = None  # e.g. "en" — 설정되면 카드의 자유 텍스트 필드를 이 언어로 번역
 
 
 class AmbiguityItem(BaseModel):
@@ -61,6 +72,13 @@ class ConfirmedCard(BaseModel):
     notes: list[str] = Field(default_factory=list)
     conflict: ConflictResult
     evidence: str
+
+
+class CardTranslation(BaseModel):
+    task: str
+    request_type: str
+    interpretation_note: str | None
+    notes: list[str]
 
 
 class StartResult(BaseModel):

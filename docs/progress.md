@@ -360,3 +360,60 @@ few-shot이 C01-04(패턴 설명, 실제 발화 아님)를 예시 입력인 것�
 - D03/D05 golden.json 라벨도 상대 시간 표현 제거해서 재검증(지금은 오답으로 잘못
   카운트됨 — 진짜 precision은 84%보다 높을 것).
 - OTHER 고친 뒤 `uv run ditto-eval`(4콜) 재실행해서 최종 확정.
+
+---
+
+## 2026-08-16 (계속) — 트랙 요구사항 확인 후 재설계: 언어·조직 경계 대응
+
+### Done
+
+멋쟁이사자처럼 트랙 페이지(Notion, `claude-in-chrome`으로 직접 렌더링해 읽음)를
+확인해 "지리/언어/문화/조직" 4개 경계(Border)와 심사 기준(보더리스 적합성이 *중요
+표시)을 파악. 이걸로 두 가지가 바로 정정됨:
+
+1. **D축(DECISION_STATUS)은 없애면 안 됨** — 어제 "문화적 근거가 약하다"고
+   지적했던 게, 사실은 트랙이 명시한 **4번째 경계 "조직"** 그 자체였다. Erin
+   Meyer의 Deciding 축(문화)에 억지로 맞추려니 근거가 약해 보였을 뿐, "조직 경계"
+   관점에서는 오히려 이 프로젝트가 가장 직접적으로 대표하는 부분.
+2. **언어(Border 02) 커버리지가 완전히 비어있었음** — AI 스코프에 번역이 전혀
+   없었음. 기존 UI(Figma)를 새로 만들 필요 없이, 이미 있는 카드 필드에 AI가 더
+   정확한/번역된 값을 채우는 것만으로 두 경계(언어+조직)를 다 채울 수 있다고
+   판단해 아래처럼 구현.
+
+**조직(Border 04) 대응**: `decision_status`를 자유 텍스트에서
+`DECISION_STATUS_VOCABULARY`(최종 확정/임시 시도/1차 완료/제안/보류/미정) 6개
+고정 어휘로 정규화하도록 프롬프트 수정 — "승인"/"완료"/"컨펌"의 조직별 의미 차이를
+AI가 흡수해서 공통 어휘로 변환하는 게 골자. (하드 `Literal` 타입으로는 안 만듦 —
+confirm된 답변이 후보 문구 그대로라 정확히 안 맞으면 pydantic validation이 깨질
+위험이 있어서, 프롬프트 레벨 강한 지시로만 처리.)
+
+**언어(Border 02) 대응**: `DraftContext.receiver_lang` 필드 추가, 그래프에
+`build_card` 뒤에 `translate_card_node` 신설 — `receiver_lang`이 설정되면
+`LLMClient.translate_card_fields()`가 카드의 자유 텍스트(`task`/`request_type`/
+`interpretation_note`/`notes`)만 번역. **번역은 모호성 확정 이후에만** 하도록
+순서를 의도적으로 그렇게 잡음 — 먼저 번역하면 번역기가 여러 해석 중 하나를
+암묵적으로 골라버려서 발신자가 확정하기 전에 모호성이 사라지는 문제가 생기기
+때문(핵심 원칙 위반). `evidence`(원문)와 `deadline_confirmed`(ISO8601) 등 구조화된
+필드는 번역 안 함. 새 UI 필드 없이 기존 카드 필드 값만 로컬라이즈되는 구조.
+
+같은 세션에서 지난번 논의대로 OTHER(C01-04) 완전 제거도 반영: `prompts.py`의
+few-shot에서 OTHER 카테고리 항목 필터링, `golden.json`에서 C01/C03 pair 삭제,
+C02는 TIME만 남기고 재작성(`C02-time-only`).
+
+실 API로 번역 확인: `task: "리뷰"→"Review"`, `decision_status`가 새 정규화
+어휘("미정") 그대로 나옴 — 첫 실행부터 정상 동작.
+
+`docs/research-other-category.md`(OTHER 문헌 검증), `docs/research-tfd-validation.md`
+(T/F/D 문헌 검증)도 이 기간에 작성 — F축 가장 탄탄, D축은 (문화가 아니라 조직
+경계라는 게 밝혀지기 전 기준으로) 가장 약하다고 판단했었음.
+
+테스트 3개 추가(`test_translate_card.py`). 전체 `uv run pytest` 28개 통과.
+
+### Next
+
+- `resolved_ambiguities`(모호성 전후 대응 기록) 필드는 논의 끝에 **기본 카드엔
+  안 보이게** 하기로 함 — 수신자 카드는 지금처럼 깔끔하게 두고, "합의 기록" 탭이나
+  발신자 확인 화면 쪽에만 노출하는 걸로 결정(아직 미구현).
+- 한도 여유 생기면 golden.json(OTHER 제거 반영본)으로 `ditto-eval` 재실행,
+  precision 재확정.
+- 위 항목들(F축 프레이밍 다듬기, D축 재검증 등)은 여전히 미해결.
