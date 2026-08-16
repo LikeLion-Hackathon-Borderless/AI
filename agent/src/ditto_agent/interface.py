@@ -22,10 +22,14 @@ _graph_lock = threading.Lock()
 # 서버 시작 시 1번 호출해 conflict_checker/checkpointer를 실제 구현으로 교체한다.
 # 안 부르면 start()/resume() 첫 호출 때 placeholder conflict_checker + MemorySaver로
 # 기본 구성됨 — 로컬 개발용, 재시작 시 스레드 상태가 날아가므로 프로덕션에는 부적합.
-def configure(conflict_checker: ConflictChecker | None = None, checkpointer: BaseCheckpointSaver | None = None) -> None:
+def configure(
+    conflict_checker: ConflictChecker | None = None,
+    checkpointer: BaseCheckpointSaver | None = None,
+    use_verify: bool = False,
+) -> None:
     global _graph
     with _graph_lock:
-        _graph = build_graph(conflict_checker=conflict_checker, checkpointer=checkpointer)
+        _graph = build_graph(conflict_checker=conflict_checker, checkpointer=checkpointer, use_verify=use_verify)
 
 
 def _get_graph():

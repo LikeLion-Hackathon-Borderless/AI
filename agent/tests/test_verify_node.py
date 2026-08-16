@@ -27,10 +27,13 @@ def test_mock_verify_batch_passes_each_case_through_unchanged(monkeypatch):
 
 
 def test_graph_still_reaches_two_interrupts_with_verify_node_inserted(monkeypatch):
-    # verify_ambiguities_node가 extract와 confirm_ambiguities 사이에 들어갔어도, mock
-    # 모드에서는 필터링이 없으니 기존 happy-path(2번 interrupt)가 그대로 유지돼야 함.
+    # use_verify=True로 verify_ambiguities_node가 extract와 confirm_ambiguities 사이에
+    # 들어갔어도, mock 모드에서는 필터링이 없으니 기존 happy-path(2번 interrupt)가 그대로
+    # 유지돼야 함. (기본값 use_verify=False는 test_graph_happy_path.py가 이미 커버함 —
+    # 2026-08-17 gpt-5-mini 실측으로 verify가 precision을 악화시켜 기본 파이프라인에서
+    # 뺐다, docs/survey-results-analysis.md 10절.)
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
-    graph = build_graph()
+    graph = build_graph(use_verify=True)
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     draft = "내일까지 조금 더 고민해 보면 좋을 것 같아요"
     context = DraftContext(now_iso="2026-08-14T18:44:00+09:00")

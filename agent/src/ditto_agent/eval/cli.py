@@ -23,17 +23,19 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--only", type=str, default=None, help="이 문자열을 id에 포함하는 케이스만 실행 (예: T01)")
     parser.add_argument("--no-cache", action="store_true", help="live 모드에서도 캐시를 쓰지 않고 매번 새로 호출")
     parser.add_argument(
-        "--no-verify",
+        "--verify",
         action="store_true",
-        help="extract() 1차 결과만 측정하고 verify() 2차 필터링을 생략 — reason-sync 등 verify"
-        " 이전 실험과 비교할 때 씀. 기본은 verify 적용.",
+        help="extract() 뒤에 verify() 2차 필터링을 체이닝 — 기본은 생략(꺼짐). 2026-08-17"
+        " gpt-5-mini 실측(docs/survey-results-analysis.md 10절)에서 verify가 precision을"
+        " 오히려 악화시키는 게 확인돼(0.679→0.500) build_graph()의 프로덕션 기본값도 꺼짐으로"
+        " 바뀜 — 이 플래그로 켜서 재측정/재튜닝할 때 씀.",
     )
     parser.add_argument(
         "--batch",
         action="store_true",
-        help="2026-08-16 세션에서 client.extract_batch()가 원인 불명으로 반복 무한 대기에"
-        " 빠지는 걸 확인함(docs/progress.md) — 기본은 단건 extract()+verify() 순차 호출."
-        " 이 플래그로 예전 배치 경로를 켤 수 있지만 불안정하다고 알려져 있음.",
+        help="여러 케이스를 한 호출로 묶어서(--batch-size) 요청 수(RPD) 자체를 아낀다 — RPD가"
+        " 낮은 계정에서 권장. --verify와 같이 쓰면 배치당 extract+verify 2호출로 체이닝됨."
+        " 개별 케이스가 배치 응답에서 누락되면 단건 호출로 자동 폴백.",
     )
     parser.add_argument(
         "--batch-size",
@@ -185,7 +187,7 @@ def main(argv: list[str] | None = None) -> int:
         cases = cases[: args.limit]
 
     client = LLMClient()
-    verify = not args.no_verify
+    verify = args.verify
     stage = "extract+verify" if verify else "extract"
     results: dict[str, ExtractionResult] = {}
     to_call = cases

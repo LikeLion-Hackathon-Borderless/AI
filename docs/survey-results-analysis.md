@@ -244,6 +244,62 @@ rolling window가 풀리길 기다리는 것 외엔 방법 없음).
   느리다"는 간접 증거만 보고 서버 부하로 추정한 채 몇 시간을 보냄. 다음엔 이상 현상이
   반복되면 제일 먼저 최소 재현 스크립트로 원본 예외부터 확인.
 
+## 10. gpt-5-mini로 전환 + 최종 3-way 비교 완료 (2026-08-17 새벽)
+
+RPD 50/day 소진 이후, 사용자가 계정 rate-limits 대시보드를 직접 확인해 공유 —
+`gpt-5`는 TPM 10,000·RPM 3으로 전 모델 중 가장 낮고, **RPD는 모델별 별도 풀**이라는
+게 확정됐다. `DITTO_OPENAI_MODEL`을 `gpt-5-mini`(TPM 60,000·RPM 10, gpt-5 대비
+3~6배)로 전환(`.env`, `.env.example`) — gpt-5의 소진된 한도와 무관하게 즉시 재개
+가능해짐.
+
+추가로 **verify 단계도 배치로 묶는 `LLMClient.verify_batch()`**를 신설해
+(`schema.BatchAmbiguityList`, `prompts.BATCH_VERIFY_SYSTEM_PROMPT`,
+`eval/cli.py`의 `_fetch_live_batch`가 `verify` 인자를 받아 배치당 extract+verify
+2호출로 체이닝) — 36케이스를 배치 크기 12로 돌리면 **요청 3~6개**로 끝나 RPD를
+크게 아낀다. 실행 중 배치 호출이 2번 `APITimeoutError`로 실패했지만 기존 개별
+재시도 폴백이 정상 작동해 완주함(RateLimitError가 아니라 aborted 처리 안 됨 —
+설계대로).
+
+### 최종 결과 (gpt-5-mini, 현재 코드 상태 = reason-sync + allowlist-swap 반영)
+
+| 실험 | recall | precision | 비고 |
+|---|---|---|---|
+| no-verify (extract만) | **0.905** | **0.679** | `outputs/eval/20260816T164043Z` |
+| verify 포함(Phase 1) | **0.952** | **0.500** | `outputs/eval/20260816T165940Z` |
+
+카테고리별(no-verify → verify):
+- TIME: recall 1.0→1.0, precision 0.800→0.571
+- REQUEST_INTENT: recall 0.714→0.857, precision 0.625→0.400
+- DECISION_STATUS: recall 1.0→1.0, precision 0.600→0.600
+- OTHER: verify 쪽에서 FP 1건 발생(원래 golden set엔 OTHER 케이스가 없는데 잘못
+  플래그함 — 스키마 안전장치 밖의 카테고리를 verify가 만들어낸 것으로 보임)
+
+**결론 — verify-loop은 기각**: 설계 의도(1차가 늘린 과탐지를 걸러 precision 회복)와
+**정반대로 나옴** — recall은 소폭 더 오르고 precision은 0.679→0.500으로 크게
+떨어졌다(FP 9건→20건, 거의 2배). gpt-5에서의 초기 가설과 다르게, gpt-5-mini에서는
+verify가 과탐지를 없애기보다 오히려 새로운 과탐지를 만들어내는 쪽으로 작동한 것으로
+보인다. **주의**: extract() 자체가 매 호출 확률적이라(같은 프롬프트라도 실행마다
+후보가 조금씩 다름) no-verify/verify 두 실행이 "같은 추출 결과에 verify만 껐다/켰다"가
+아니라 "완전히 독립된 두 번의 추출"이라 노이즈가 섞여 있을 수 있음 — 그래도 FP가
+2배 이상 늘어난 격차는 노이즈만으로 설명하기엔 커서, **현재 verify-loop 프롬프트는
+프로덕션에 채택하지 않는다**로 결론.
+
+### 최종 권장 상태
+
+- **verify_ambiguities_node는 그래프에 남겨두되(코드/테스트는 정상), 기본
+  파이프라인에서 실제로 득이 안 되는 게 실측 확인됨** — 다음 세션에서 verify
+  프롬프트를 더 보수적으로(예: "애매하면 그냥 남겨라" 지시 강화) 다시 튜닝하거나,
+  아니면 이 기능 자체를 옵션으로 끄는 걸 고려.
+- **reason-sync + allowlist-swap(현재 코드) 단독으로는 gpt-5-mini에서 recall
+  0.905/precision 0.679** — gpt-5 baseline(0.810/0.739) 대비 recall 대폭 개선,
+  precision은 소폭 하락. 모델을 gpt-5→gpt-5-mini로 바꾼 효과와 코드 변경 효과가
+  섞여 있어 완전히 분리는 안 되지만, 현재 이 조합이 이번 세션에서 가장 균형 잡힌
+  결과.
+- 최종 커밋 상태: verify_ambiguities_node는 그래프에 포함돼 있음(요청사항이었던
+  "구조는 만들어두고 확정"에 부합) — 실제로 켤지는 `graph/build.py`에서 이
+  노드를 스킵하도록 바꾸는 것도 다음 단계 후보(코드 자체를 지우진 않되 파이프라인
+  기본 경로에서 빼는 방향).
+
 ## Next
 
 - `docs/문화_판단기준표_초안.md`의 D01/D03/D05/F03/F04 설명을 "모호함" → "국내 컨센서스는
