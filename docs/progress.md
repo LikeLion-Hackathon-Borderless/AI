@@ -539,3 +539,49 @@ recall/precision은 다음 세션(계정 상태 회복 후)으로 미룸.**
   추가하는 것도 고려.
 - reason-sync의 recall↑/precision↓ 트레이드오프가 실제 제품 목표에 맞는지 팀
   논의 필요(과확인 vs 누락 중 어느 쪽이 더 비싼 실수인지).
+
+## 2026-08-17 (새벽) — Phase 0(API 타임아웃) + Phase 1(extract→verify 루프) 구현
+
+사용자가 "계속 관여 안 할게, 알아서 플랜 짜고 커밋까지 자율적으로 하라"고 지시 —
+plan mode로 recall/precision 추가 개선 아키텍처를 설계·승인받아 진행. 웹 검색으로
+어젯밤 반복된 무한 대기의 진짜 원인을 먼저 찾음: OpenAI Python SDK 기본 read
+timeout이 600초(10분)인데 `client.py`가 `timeout`을 명시 안 했던 것 — TPM 문제가
+아니라 SDK가 느린 응답을 그냥 계속 기다린 거였음.
+
+**Phase 0** (커밋 `19f7fad`): `OpenAI(..., timeout=60.0)` 1줄 추가.
+
+**Phase 1** (커밋 `f9aa3e5`): reason-sync가 늘린 과탐지(FP)를 걸러내는 2차 LLM
+호출 추가 — `schema.AmbiguityList`, `prompts.VERIFY_SYSTEM_PROMPT`,
+`LLMClient.verify()`, `graph.verify_ambiguities_node`(그래프 배선:
+`extract → verify_ambiguities → confirm_ambiguities → ...`), `eval/cli.py`의
+`_fetch_live_sequential`(배치 호출이 불안정하다고 확인됐던 거라 기본 경로를 단건
+순차 `extract()`+`verify()`로 교체, `--no-verify`/`--batch` 플래그로 실험 변형 지원),
+`eval/cache.py`에 `stage` 파라미터(verify 유무별로 캐시 분리). 테스트 33개 전부
+통과, ruff clean.
+
+**Live 재측정은 실패**: `--no-verify` 실험(36케이스, extract만)을 세 번 시도했는데
+매번 5개 안팎에서 극단적으로 느려짐(어떤 호출은 1.6초, 어떤 호출은 20분 넘게
+안 끝남 — 같은 코드, 같은 60초 타임아웃 설정인데도). Phase 0 수정 자체는 유효하고
+필요했지만(진짜 원인이었음), 그것만으로 오늘 계정의 간헐적 저하 문제를 완전히
+해결하진 못함. 세 번의 삽질 중에 두 가지를 배움:
+1. `tail`로 파이프하거나 `> file` 리다이렉트만 해도 Python이 비TTY 출력을 블록
+   버퍼링해서 실시간 진행 상황이 안 보임 — `PYTHONUNBUFFERED=1`을 반드시 같이 줘야
+   함(이제부터 계속 이렇게 씀).
+2. 백그라운드 Bash 호출은 세션 cwd를 안 물려받아 매번 `cd agent &&`를 빼먹으면
+   "No such file" 에러 — 이것 때문에도 몇 번 헛돌았음.
+
+결국 baseline(0.810/0.739)·reason-sync(0.905/0.655) 두 실험 숫자만 확정 상태로
+남고, verify-loop·allowlist-swap 실측은 다음 세션(또는 계정이 안정된 시간대)으로
+미룸 — 코드는 이미 다 준비돼서 재측정만 하면 됨. `docs/survey-results-analysis.md`
+9절에 상세 기록.
+
+### Next
+
+- 계정 상태 안정되면 `cd agent && PYTHONUNBUFFERED=1 DITTO_LLM_MODE=live uv run
+  ditto-eval --pace 5`(verify 포함)와 `--no-verify`(제외) 각각 실행해 verify-loop·
+  allowlist-swap 실측 숫자 채우기.
+- Phase 2(RAG 기반 동적 few-shot)는 Phase 1 실측 확인 후 착수 여부 판단 —
+  plan 파일(`~/.claude/plans/whimsical-wandering-stroustrup.md`)에 설계 남아있음.
+- 오늘 반복된 "간헐적으로 20분씩 걸리는" 현상의 진짜 원인(계정 티어? 특정 시간대
+  혼잡? gpt-5 자체의 변동성?)은 아직 특정 못함 — OpenAI 대시보드에서 usage/latency
+  확인해보는 것도 다음 세션 후보.

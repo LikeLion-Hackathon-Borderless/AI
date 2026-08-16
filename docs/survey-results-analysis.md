@@ -169,6 +169,59 @@ few-shot 신호가 더 선명함) 테스트도 통과하지만, **실측 recall/
 한국어 화자가 반반으로 헷갈리는가"가 아니라서, 설문에서 확인된 국내 컨센서스가
 골든셋 라벨을 무효화하지 않는다는 결론 그대로 유지.
 
+## 9. Phase 0/1 아키텍처 개선 — API 안정화 + extract→verify 루프 (2026-08-17 새벽)
+
+`docs/문화_판단기준표_초안.md`/코드 반영 이후, recall/precision을 더 끌어올리기 위한
+2단계 작업(plan mode 승인 후 진행):
+
+### Phase 0 — API 호출 안정화 (완료, 커밋됨)
+
+웹 검색으로 어젯밤 반복된 무한 대기의 원인을 확정: OpenAI Python SDK의 기본 read
+timeout이 600초(10분)인데 `client.py`가 `timeout`을 명시 안 해서, 서버가 느리게
+응답하면 에러 없이 최대 10분간 조용히 멈추는 게 SDK 기본 동작이었다. `OpenAI(...,
+timeout=60.0)`로 수정(커밋 `19f7fad`).
+
+### Phase 1 — extract→verify 2단계 파이프라인 (코드 완료, 유닛테스트 통과, live 재측정은 미완료)
+
+`schema.AmbiguityList`, `prompts.VERIFY_SYSTEM_PROMPT`, `LLMClient.verify()`,
+`graph.verify_ambiguities_node`(그래프에 `extract → verify_ambiguities →
+confirm_ambiguities`로 재배선), `eval/cli.py`의 `_fetch_live_sequential`(단건
+`extract()`+`verify()` 순차 호출 — `extract_batch()`가 불안정하다고 확인됐던 걸 반영해
+기본 경로를 바꿈, `--batch`로 예전 경로도 남겨둠), `eval/cache.py`에 `stage` 파라미터
+추가(verify 유무가 다른 실험끼리 캐시 안 섞이게). 테스트 33개 전부 통과, ruff clean.
+커밋 `f9aa3e5`.
+
+### Live 재측정 시도 — 결론: 오늘은 여기까지
+
+Phase 0 타임아웃 수정 이후에도 `extract()` 단건 호출이 여전히 20~45초씩 걸리고,
+때때로(원인 특정 못함 — 같은 코드로 방금은 1.6초짜리 단순 호출도 성공했는데 바로
+다음 시도에서 20분 넘게 첫 케이스 하나가 안 끝남) 60초 타임아웃 안에서도 응답이
+극단적으로 느려지는 구간이 있다 — 계정/서버 쪽의 간헐적 저하로 보이며, 클라이언트
+코드 수정만으로는 완전히 해결되지 않는 영역. `--no-verify`(36케이스, extract만) 실험을
+세 번 재시도했으나 매번 5개 안팎에서 극단적으로 느려져 완주하지 못했다.
+
+**정직한 현재 상태**:
+- Phase 0/1 코드는 논리적으로 타당하고 테스트로 검증됨 — verify가 mock에서 정확히
+  통과/필터링하는 것, 그래프 배선, 캐시 stage 분리 전부 확인됨.
+- **verify-loop과 allowlist-swap의 실측 recall/precision 숫자는 아직 없음** —
+  baseline(0.810/0.739)·reason-sync(0.905/0.655) 두 개만 실측 완료 상태.
+- 다음 세션에서 계정 상태가 안정되면(또는 다른 시간대에) `cd agent && PYTHONUNBUFFERED=1
+  DITTO_LLM_MODE=live uv run ditto-eval --pace 5`(verify 포함 기본값) /
+  `--no-verify`(verify 제외) 두 번 돌려서 표를 마저 채우면 됨 — 코드는 이미 준비돼
+  있어서 재측정만 하면 끝.
+
+### 배운 것 — 다음에 eval 돌릴 때 참고
+
+- **`tail`로 파이프하면 출력이 버퍼링돼 진행 상황이 안 보인다** — 프로세스가 끝나야
+  한꺼번에 나옴. `> logfile 2>&1`로 직접 리다이렉트해도 **Python 자체가 비TTY
+  출력을 블록 버퍼링**해서 마찬가지로 안 보임 — `PYTHONUNBUFFERED=1`을 반드시 같이
+  줘야 실시간으로 로그가 쌓인다(이번에 알아낸 것, 앞으로 계속 씀).
+- 백그라운드 Bash 호출은 세션 cwd를 안 물려받는다 — 매번 `cd /Users/.../agent &&`를
+  명시해야 함(빼먹어서 "No such file" 에러로 여러 번 헛돌았음).
+- 진행 상황은 로그 tail보다 `cache.load(..., stage=...)` 스크립트로 직접 캐시 히트
+  개수를 세는 게 더 믿을 만하다(로그 파일 flush 타이밍 이슈가 있어도 캐시 파일은
+  즉시 디스크에 써짐).
+
 ## Next
 
 - `docs/문화_판단기준표_초안.md`의 D01/D03/D05/F03/F04 설명을 "모호함" → "국내 컨센서스는
