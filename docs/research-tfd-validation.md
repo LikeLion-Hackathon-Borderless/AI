@@ -64,6 +64,34 @@
 | D (Deciding) | 약함 (원래 축 정의와 항목 내용 불일치) | 약함 (조직 문헌뿐, 문화 대조 없음) | 근거 가장 약함 |
 | C (Communicating) | 있음 (Hall 이론) | 항목별로 갈림(politeness/hedging은 강함, 톤/침묵은 약함) — 별도 문서 참고 | `research-other-category.md` 참고 |
 
+## 사람 없이 문헌만으로 검증을 대체할 수 있는가 (2026-08-16 추가 조사)
+
+3가지 검증 방법(실제 사건 기반 / 쌍대 해석 테스트 / 빈도 측정, `docs/progress.md`
+참고)을 사람 응답 없이 기존 문헌으로 대체할 수 있는지 확인했다. **결론: 완전
+대체는 안 된다.**
+
+- **쌍대 해석 테스트 — 부분 대체 가능, 단 증거가 엇갈림.** Holtgraves(1997,
+  *Journal of Personality and Social Psychology*)가 미국 대학생 vs 서울 대학생에게
+  Conversational Indirectness Scale(CIS)을 실제로 실시해 "한국 참가자가 유의미하게
+  더 간접적"이라는 결과를 냈다. 그런데 더 최근 재현 연구(56명 영어 원어민 vs 32명
+  미국 거주 한국인 유학생 대상, "Choosing One's Words: Conversational Indirectness
+  and Humor Style in Two Distinct Cultural Groups", [PMC11939602](https://pmc.ncbi.nlm.nih.gov/articles/PMC11939602/))는
+  **유의미한 차이를 재현하지 못했다** — 미국 거주 한국인은 이미 어느 정도 적응됐을
+  가능성. 두 연구 다 우리 20개 항목을 직접 테스트한 게 아니라 "간접성 수준" 일반
+  척도라, 방향성 참고 이상은 안 됨.
+- **실제 사건 기반 — 대체 불가.** 한미 업무 Slack/이메일 실제 오해 사례를 모은
+  공개 데이터셋은 존재하지 않는다(사기업 내부 데이터라 당연히 비공개). 가장 가까운
+  건 일본-미국 회의 오해 사례 연구 하나뿐("Japanese and American meetings and what
+  goes on before them: A case study of co-worker misunderstanding") — 한국도
+  아니고 단일 사례라 대체재로 부족.
+- **빈도 측정 — 일반 통계만 있고 항목별 빈도는 없음.** Economist Intelligence Unit
+  조사(응답자 44%가 소통 부실을 프로젝트 실패 원인으로 꼽음)는 한미 특정도, 우리
+  20개 항목 특정도 아닌 배경 통계일 뿐.
+
+**실용적 결론**: 실제 사건 기반·빈도 측정은 사람 응답(설문/인터뷰) 없이는 방법이
+없다. 쌍대 해석 테스트만 기존 CIS 척도를 우리 20개 항목에 맞게 변형해 재사용하면
+설문 설계 시간을 아낄 여지가 있다.
+
 ## 권고
 
 - **F축은 신뢰도 높게 유지**, 다만 F04-06의 "미국=직접적" 프레이밍은 Meyer의
