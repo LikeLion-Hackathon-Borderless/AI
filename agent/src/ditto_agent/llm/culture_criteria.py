@@ -220,7 +220,8 @@ CULTURE_CRITERIA: list[CriteriaRow] = [
 ]
 
 
-def as_few_shot_examples() -> list[dict]:
+def as_few_shot_examples(ids: set[str] | None = None) -> list[dict]:
+    rows = CULTURE_CRITERIA if ids is None else [r for r in CULTURE_CRITERIA if r["id"] in ids]
     return [
         {
             "input": row["phrase"],
@@ -232,5 +233,5 @@ def as_few_shot_examples() -> list[dict]:
                 "suggestion": row["suggestion"],
             },
         }
-        for row in CULTURE_CRITERIA
+        for row in rows
     ]

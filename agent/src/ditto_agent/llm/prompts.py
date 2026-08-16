@@ -9,11 +9,13 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 - 시간 표현은 임의로 확정하지 말고, 확인이 필요한 후보 시각을 제시하세요.
 - 의미가 여러 갈래로 읽히는 표현은 실제 의도를 발신자가 고르도록 후보 해석을 제시하세요."""
 
-# docs/문화_판단기준표_초안.md 20개 항목(T01-05/F01-06/D01-05/C01-04, 전부 미검증) 중
-# OTHER(C01-04)는 제외 — 골든셋에서 recall 0/3, 문헌 조사로도 "간접화법/톤 해석은 최고
-# 성능 LLM도 사람 수준에 못 미치는 구조적 약점"(docs/research-other-category.md)임을
-# 확인해 이번 스코프에서 뺐다. TIME/REQUEST_INTENT/DECISION_STATUS 3개만 정식 지원.
-FEW_SHOT_EXAMPLES: list[dict] = [ex for ex in as_few_shot_examples() if ex["ambiguity"]["category"] != "OTHER"]
+# docs/문화_판단기준표_초안.md 20개 중 OTHER(C01-04)는 제외(docs/research-other-category.md
+# 참고) + 카테고리당 대표 예시 2개씩만 선별. "few-shot이 많을수록 좋은 게 아니라 5~7개
+# 이후 정체되고, 과하면 모델이 산만해져 오히려 정확도가 떨어질 수 있다"는 문헌 근거로
+# 21개(양성 16 + 부정 5)에서 11개로 줄임 — 토큰도 같이 줄어 TPM 여유도 생김
+# (docs/research-few-shot-efficiency.md).
+_FEW_SHOT_ALLOWLIST = {"T01", "T03", "F01", "F04", "D01", "D03"}
+FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples(ids=_FEW_SHOT_ALLOWLIST)
 
 # culture_criteria.py 20개가 전부 "모호함" 양성 예시뿐이라, 골든셋 평가에서 명시적 문장까지
 # 전부 오탐(precision 0.51)하는 걸 확인함 — 부정 예시가 하나도 없어 "항상 뭔가는 모호하다"는
