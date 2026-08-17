@@ -12,6 +12,8 @@ from ditto_agent.eval.golden import GoldenCase, load_golden_cases
 from ditto_agent.eval.reporter import write_report
 from ditto_agent.eval.scorer import aggregate, score_case
 from ditto_agent.llm.client import LLMClient
+from ditto_agent.llm.prompts import FEW_SHOT_ALLOWLIST
+from ditto_agent.llm.retrieval import select_few_shot
 from ditto_agent.schema import DraftContext, ExtractionResult
 
 
@@ -67,6 +69,13 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         " 2026-08-17 실측(survey-results-analysis.md 13-1절)에서 과반(n//2+1)은 precision을"
         " 오히려 깎아먹었고(0.714) 만장일치는 recall/precision 둘 다 만점이 나옴.",
     )
+    parser.add_argument(
+        "--rag",
+        action="store_true",
+        help="draft마다 임베딩 유사도로 few-shot 6개를 동적 선택(llm/retrieval.py) — 기본 꺼짐,"
+        " 아직 실측 전. --batch/--consistency와는 같이 못 씀(sequential 경로에서만 지원) —"
+        " 임베딩 실패 시 고정 allowlist로 자동 폴백.",
+    )
     return parser.parse_args(argv)
 
 
@@ -94,24 +103,32 @@ def _run_with_hard_timeout(fn, *args, timeout: float = _HARD_TIMEOUT_SECONDS):
 
 
 def _fetch_live_sequential(
-    client: LLMClient, cases: list[GoldenCase], verify: bool, pace: float
+    client: LLMClient,
+    cases: list[GoldenCase],
+    verify: bool,
+    pace: float,
+    few_shot_ids_by_case: dict[str, set[str] | None] | None = None,
 ) -> tuple[dict, bool]:
     # extract_batch()의 불안정성(위 --batch 도움말 참고) 때문에 기본 경로로 채택 — 케이스당
     # 호출 1~2개(verify 포함 시)라 느리지만, 각 호출을 _run_with_hard_timeout으로 감싸서
     # 어떤 이유로든 60초 넘게 멈추면 강제로 포기하고 다음 케이스로 넘어간다.
+    # few_shot_ids_by_case가 주어지면(--rag) main()이 캐시 조회 때 이미 계산해둔 값을 그대로
+    # 써서 임베딩 API를 중복 호출하지 않는다 — 캐시 키와 실제 호출이 항상 같은 few-shot
+    # 선택을 쓰게 보장하는 목적도 있음(cache.py 참고).
     results: dict[str, ExtractionResult] = {}
     aborted = False
     stage = "extract+verify" if verify else "extract"
 
     for case in cases:
         ctx = DraftContext(**case.context)
+        few_shot_ids = few_shot_ids_by_case.get(case.id) if few_shot_ids_by_case else None
         try:
-            r = _run_with_hard_timeout(client.extract, case.draft, ctx)
+            r = _run_with_hard_timeout(client.extract, case.draft, ctx, few_shot_ids)
             if verify:
                 verified = _run_with_hard_timeout(client.verify, case.draft, r.ambiguities)
                 r = r.model_copy(update={"ambiguities": verified})
             results[case.id] = r
-            cache.save(case.draft, ctx, client.model, r, stage=stage)
+            cache.save(case.draft, ctx, client.model, r, stage=stage, few_shot_ids=few_shot_ids)
             print(f"  {case.id}: ok", flush=True)
         except FutureTimeoutError:
             print(f"  {case.id}: FAILED (하드 타임아웃 {_HARD_TIMEOUT_SECONDS}초 초과, 스레드 방치하고 다음으로)", flush=True)
@@ -233,20 +250,39 @@ def main(argv: list[str] | None = None) -> int:
     if args.limit:
         cases = cases[: args.limit]
 
-    client = LLMClient()
-    verify = args.verify
     consistency_n = args.consistency
+    use_rag = args.rag and not args.batch and not consistency_n
+    if args.rag and not use_rag:
+        print("--rag는 --batch/--consistency와 같이 못 써서 무시됩니다 (sequential 경로 전용)")
+
+    client = LLMClient(use_rag=use_rag)
+    verify = args.verify
     consistency_threshold = args.consistency_threshold or consistency_n
     stage = f"extract-consistency-n{consistency_n}-t{consistency_threshold}" if consistency_n else (
         "extract+verify" if verify else "extract"
     )
+    if use_rag:
+        stage += "-rag"
+
+    # RAG일 때 few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로
+    # 씀 — 임베딩 API를 두 번 부르지 않기 위함(cache.py의 few_shot_ids 파라미터 참고).
+    few_shot_ids_by_case: dict[str, set[str] | None] = {}
+    if use_rag:
+        for case in cases:
+            few_shot_ids_by_case[case.id] = select_few_shot(
+                client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST
+            )
+
     results: dict[str, ExtractionResult] = {}
     to_call = cases
 
     if client.mode == "live" and not args.no_cache:
         to_call = []
         for case in cases:
-            hit = cache.load(case.draft, DraftContext(**case.context), client.model, stage=stage)
+            few_shot_ids = few_shot_ids_by_case.get(case.id)
+            hit = cache.load(
+                case.draft, DraftContext(**case.context), client.model, stage=stage, few_shot_ids=few_shot_ids
+            )
             if hit is not None:
                 results[case.id] = hit
             else:
@@ -271,7 +307,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.batch:
             live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace, verify)
         else:
-            live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace)
+            live_results, aborted = _fetch_live_sequential(
+                client, to_call, verify, args.pace, few_shot_ids_by_case if use_rag else None
+            )
         results.update(live_results)
 
     scores = []

@@ -38,19 +38,28 @@ def embed_criteria(embed_fn: EmbedFn, cache_path: Path = DEFAULT_CACHE_PATH) -> 
     return embeddings
 
 
-def select_few_shot(embed_fn: EmbedFn, draft: str, k: int = 6, fallback: set[str] | None = None) -> set[str]:
+def select_few_shot(
+    embed_fn: EmbedFn,
+    draft: str,
+    k: int = 6,
+    fallback: set[str] | None = None,
+    cache_path: Path = DEFAULT_CACHE_PATH,
+) -> set[str]:
     # draft와 코사인 유사도가 가장 높은 판단기준표 phrase id를 k개 고른다. RAG가 뭔가의
-    # 이유로 실패해도(임베딩 API 에러, RPD 등) 전체 파이프라인이 죽으면 안 되므로 실패 시
-    # 고정 allowlist(prompts._FEW_SHOT_ALLOWLIST 등)로 폴백한다.
+    # 이유로 실패해도(임베딩 API 에러, RPD, 차원이 안 맞는 캐시 등) 전체 파이프라인이
+    # 죽으면 안 되므로 실패 시 고정 allowlist(prompts.FEW_SHOT_ALLOWLIST 등)로 폴백한다.
+    # 코사인 계산(_cosine)까지 try 안에 넣어둔 이유: 캐시가 깨져서 차원이 안 맞는 벡터가
+    # 섞여 있으면 embed_fn 호출 자체는 성공해도 sorted()에서 터질 수 있음(실제로 테스트가
+    # 캐시 파일을 오염시켰다가 이 문제를 실측으로 잡음).
     try:
-        criteria_embeddings = embed_criteria(embed_fn)
+        criteria_embeddings = embed_criteria(embed_fn, cache_path=cache_path)
         draft_embedding = embed_fn(draft)
-    except Exception:  # noqa: BLE001 — 임베딩 실패는 RAG를 껐다고 보고 폴백하는 게 목적
+        scored = sorted(
+            criteria_embeddings.items(),
+            key=lambda kv: _cosine(draft_embedding, kv[1]),
+            reverse=True,
+        )
+    except Exception:  # noqa: BLE001 — 임베딩/유사도 계산 실패는 RAG를 껐다고 보고 폴백하는 게 목적
         return fallback if fallback is not None else set()
 
-    scored = sorted(
-        criteria_embeddings.items(),
-        key=lambda kv: _cosine(draft_embedding, kv[1]),
-        reverse=True,
-    )
     return {id_ for id_, _ in scored[:k]}

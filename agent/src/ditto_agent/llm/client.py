@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from ditto_agent.llm.postfilter import filter_false_positive_time
 from ditto_agent.llm.prompts import (
     BATCH_VERIFY_SYSTEM_PROMPT,
+    FEW_SHOT_ALLOWLIST,
     TRANSLATE_SYSTEM_PROMPT,
     VERIFY_SYSTEM_PROMPT,
     build_batch_user_prompt,
@@ -16,6 +17,7 @@ from ditto_agent.llm.prompts import (
     build_user_prompt,
     build_verify_user_prompt,
 )
+from ditto_agent.llm.retrieval import select_few_shot
 from ditto_agent.schema import (
     AmbiguityCategory,
     AmbiguityItem,
@@ -146,7 +148,11 @@ def _vote_extraction(results: list[ExtractionResult], threshold: int) -> Extract
 
 
 class LLMClient:
-    def __init__(self) -> None:
+    def __init__(self, use_rag: bool = False) -> None:
+        # use_rag: RAG 동적 few-shot 선택(llm/retrieval.py)을 쓸지 — 기본 꺼짐. verify-loop과
+        # 달리 아직 실측으로 검증되지 않은 기능이라 opt-in으로 시작(2026-08-17,
+        # docs/survey-results-analysis.md 16절 Next 참고).
+        self.use_rag = use_rag
         # 기본값은 "mock"이 아니라 "live" — DITTO_LLM_MODE를 아예 안 정해둔 배포는 조용히
         # 가짜 응답만 내보내는 것보다 키가 없어 바로 죽는 게 훨씬 안전하다(silent failure 방지).
         # 로컬 개발용 mock은 .env.example에 명시적으로 적어둬서 그 경로는 안 바뀜.
@@ -154,7 +160,7 @@ class LLMClient:
         if self.mode not in ("mock", "live"):
             raise ValueError(f"DITTO_LLM_MODE must be 'mock' or 'live', got {self.mode!r}")
 
-        self.model = os.getenv("DITTO_OPENAI_MODEL", "gpt-4o-mini")
+        self.model = os.getenv("DITTO_OPENAI_MODEL", "o3-mini")
         self._client = None
         if self.mode == "live":
             from openai import OpenAI
@@ -174,16 +180,24 @@ class LLMClient:
             # 재현됨). 60초로 줄여서 느린 호출이 빨리 실패하고 호출부가 눈에 보이게 처리하게 함.
             self._client = OpenAI(api_key=api_key, max_retries=0, timeout=60.0)
 
-    def extract(self, draft: str, context: DraftContext) -> ExtractionResult:
+    def extract(
+        self, draft: str, context: DraftContext, few_shot_ids: set[str] | None = None
+    ) -> ExtractionResult:
+        # few_shot_ids를 명시적으로 넘기면(주로 eval/cli.py가 캐시 키와 실제 호출에 같은 값을
+        # 쓰려고) 그대로 쓰고, 안 넘겼는데 self.use_rag면 그때 select_few_shot()으로 직접
+        # 고른다 — 임베딩 API를 중복 호출하지 않으려고 "누가 먼저 계산했는지"를 구분함.
         if self.mode == "mock":
             result = _mock_extract(draft, context)
             return result.model_copy(update={"ambiguities": filter_false_positive_time(draft, result.ambiguities)})
+
+        if few_shot_ids is None and self.use_rag:
+            few_shot_ids = select_few_shot(self.embed, draft, k=6, fallback=FEW_SHOT_ALLOWLIST)
 
         now_iso = context.now_iso or datetime.now(ZoneInfo(context.sender_tz)).isoformat()
         completion = self._client.chat.completions.parse(
             model=self.model,
             messages=[
-                {"role": "system", "content": build_system_prompt()},
+                {"role": "system", "content": build_system_prompt(few_shot_ids=few_shot_ids)},
                 {"role": "user", "content": build_user_prompt(draft, context.sender_tz, context.receiver_tz, now_iso)},
             ],
             response_format=ExtractionResult,

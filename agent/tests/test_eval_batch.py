@@ -95,8 +95,10 @@ class _FakeSequentialClient:
         self._extract_response = extract_response
         self._verify_filters_to = verify_filters_to
         self.verify_calls = 0
+        self.extract_few_shot_ids = None
 
-    def extract(self, draft, context):
+    def extract(self, draft, context, few_shot_ids=None):
+        self.extract_few_shot_ids = few_shot_ids
         return self._extract_response
 
     def verify(self, draft, ambiguities):
@@ -126,6 +128,16 @@ def test_fetch_live_sequential_skips_verify_when_disabled(monkeypatch):
     assert not aborted
     assert client.verify_calls == 0
     assert results["X"] == _RESULT_A  # verify 생략 — 1차 결과 그대로
+
+
+def test_fetch_live_sequential_passes_precomputed_few_shot_ids_to_extract(monkeypatch):
+    monkeypatch.setattr(cache, "save", lambda *a, **k: None)
+    client = _FakeSequentialClient(_RESULT_A)
+    cases = [_case("X")]
+
+    _fetch_live_sequential(client, cases, verify=False, pace=0, few_shot_ids_by_case={"X": {"T01", "F02"}})
+
+    assert client.extract_few_shot_ids == {"T01", "F02"}
 
 
 def test_fetch_live_batch_chains_verify_batch_when_enabled(monkeypatch):

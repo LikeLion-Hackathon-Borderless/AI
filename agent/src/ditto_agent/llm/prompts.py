@@ -19,8 +19,8 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 # (국내 화자는 이미 한 해석으로 강하게 쏠림)이라는 게 확인돼, T04/F02/D02/D04(설문에서
 # 실제로 표준편차가 가장 컸던 = 국내에서도 진짜 갈리는 항목)로 교체 — 모호성 탐지
 # few-shot 신호를 더 선명하게 하려는 의도.
-_FEW_SHOT_ALLOWLIST = {"T01", "T04", "F01", "F02", "D02", "D04"}
-FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples(ids=_FEW_SHOT_ALLOWLIST)
+FEW_SHOT_ALLOWLIST = {"T01", "T04", "F01", "F02", "D02", "D04"}
+FEW_SHOT_EXAMPLES: list[dict] = as_few_shot_examples(ids=FEW_SHOT_ALLOWLIST)
 
 # culture_criteria.py 20개가 전부 "모호함" 양성 예시뿐이라, 골든셋 평가에서 명시적 문장까지
 # 전부 오탐(precision 0.51)하는 걸 확인함 — 부정 예시가 하나도 없어 "항상 뭔가는 모호하다"는
@@ -52,7 +52,7 @@ candidates, suggestion}}).
 
 def build_system_prompt(batch: bool = False, few_shot_ids: set[str] | None = None) -> str:
     # few_shot_ids가 주어지면(RAG 동적 선택, llm/retrieval.py 참고) 고정 allowlist 대신 그
-    # id들로 few-shot을 구성한다 — 생략하면 지금까지처럼 고정 6개(_FEW_SHOT_ALLOWLIST)를 씀.
+    # id들로 few-shot을 구성한다 — 생략하면 지금까지처럼 고정 6개(FEW_SHOT_ALLOWLIST)를 씀.
     examples = as_few_shot_examples(ids=few_shot_ids) if few_shot_ids is not None else FEW_SHOT_EXAMPLES
     positive = "\n\n".join(
         f"예시 입력: {ex['input']}\n예시 모호성: {ex['ambiguity']}" for ex in examples
