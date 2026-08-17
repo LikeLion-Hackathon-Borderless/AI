@@ -26,10 +26,18 @@ def configure(
     conflict_checker: ConflictChecker | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     use_verify: bool = False,
+    use_consistency: bool = True,
+    consistency_n: int = 3,
 ) -> None:
     global _graph
     with _graph_lock:
-        _graph = build_graph(conflict_checker=conflict_checker, checkpointer=checkpointer, use_verify=use_verify)
+        _graph = build_graph(
+            conflict_checker=conflict_checker,
+            checkpointer=checkpointer,
+            use_verify=use_verify,
+            use_consistency=use_consistency,
+            consistency_n=consistency_n,
+        )
 
 
 def _get_graph():

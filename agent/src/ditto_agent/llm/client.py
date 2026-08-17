@@ -113,17 +113,23 @@ def _vote_extraction(results: list[ExtractionResult], threshold: int) -> Extract
     # 없이 순수 함수로 다수결만 검증할 수 있게 함. 카테고리는 "n번 중 threshold번 이상
     # 등장했는지"로 채택 여부를 정하고, 대표 AmbiguityItem은 채택된 카테고리가 처음
     # 등장한 실행의 것을 그대로 씀(문구를 다시 합성하지 않음 — 실제 모델 출력을 유지).
+    # seen_categories를 plain set으로 만들면 문자열 hash seed가 프로세스마다 랜덤이라
+    # 순회 순서가 실행마다 바뀐다(이 버그 때문에 mock 그래프 테스트가 간헐적으로 깨졌음 —
+    # interrupt가 도는 순서가 ambiguities 리스트 순서를 그대로 따르므로). dict.fromkeys()로
+    # "처음 등장한 순서"를 결정적으로 보존한다.
     category_votes: Counter[AmbiguityCategory] = Counter()
     representative: dict[AmbiguityCategory, AmbiguityItem] = {}
+    category_order: list[AmbiguityCategory] = []
     for result in results:
-        seen_categories = {item.category for item in result.ambiguities}
+        seen_categories = dict.fromkeys(item.category for item in result.ambiguities)
         for category in seen_categories:
             category_votes[category] += 1
             if category not in representative:
                 representative[category] = next(item for item in result.ambiguities if item.category == category)
+                category_order.append(category)
 
     winning_ambiguities = [
-        representative[category] for category, votes in category_votes.items() if votes >= threshold
+        representative[category] for category in category_order if category_votes[category] >= threshold
     ]
 
     base = results[0]

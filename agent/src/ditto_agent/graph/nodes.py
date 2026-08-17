@@ -13,9 +13,26 @@ from ditto_agent.schema import (
 
 
 def extract_node(state: GraphState) -> dict:
-    context = DraftContext.model_validate(state["context"])
-    result = LLMClient().extract(state["draft"], context)
-    return {"extraction": result.model_dump()}
+    return make_extract_node()(state)
+
+
+def make_extract_node(use_consistency: bool = False, n: int = 3):
+    # use_consistency=True면 단발 extract() 대신 extract_consistent()(n회 독립 추출 후
+    # 카테고리 만장일치 채택)를 쓴다 — 2026-08-17 o3-mini 36케이스 전체 실측(recall=0.857,
+    # precision=0.750, 이번 세션 최고 균형 결과, docs/survey-results-analysis.md 13-1/16절)
+    # 으로 verify-loop과 달리 채택하기로 함. API 요청 수는 여전히 1번(배치 크기가 n일 뿐)이라
+    # RPD 부담은 그대로지만, 한 번의 응답이 n배 더 길어져 지연시간은 늘어난다는 점은 감안할 것.
+    def node(state: GraphState) -> dict:
+        context = DraftContext.model_validate(state["context"])
+        client = LLMClient()
+        result = (
+            client.extract_consistent(state["draft"], context, n=n)
+            if use_consistency
+            else client.extract(state["draft"], context)
+        )
+        return {"extraction": result.model_dump()}
+
+    return node
 
 
 def verify_ambiguities_node(state: GraphState) -> dict:
