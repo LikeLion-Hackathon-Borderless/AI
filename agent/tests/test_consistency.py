@@ -80,9 +80,11 @@ def test_mock_extract_consistent_calls_extract_batch_n_times(monkeypatch):
     assert calls == [3]
 
 
-def test_graph_default_uses_consistency_and_still_reaches_two_interrupts(monkeypatch):
-    # build_graph() 기본값이 use_consistency=True로 바뀐 뒤에도(2026-08-17, o3-mini 36케이스
-    # 실측 채택) mock 모드 end-to-end happy path가 그대로 유지되는지 확인.
+def test_graph_default_no_consistency_still_reaches_two_interrupts(monkeypatch):
+    # build_graph() 기본값이 use_consistency=False로 최종 확정된 뒤(2026-08-17, 유출 없이
+    # 6회 반복·pooled n=108로 재측정한 결과 진짜 recall/precision 트레이드오프로 확인돼
+    # recall 우선 — survey-results-analysis.md 18절) mock 모드 end-to-end happy path가
+    # 그대로 유지되는지 확인.
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
@@ -95,9 +97,11 @@ def test_graph_default_uses_consistency_and_still_reaches_two_interrupts(monkeyp
     assert snapshot.values["extraction"]["ambiguities"]
 
 
-def test_graph_use_consistency_false_matches_plain_extract(monkeypatch):
+def test_graph_use_consistency_true_still_reaches_two_interrupts(monkeypatch):
+    # precision을 더 우선해야 하는 사용 사례를 위해 옵션은 남겨뒀으니(기본값만 False),
+    # 명시적으로 켰을 때도 mock 모드 end-to-end happy path가 깨지지 않는지 확인.
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
-    graph = build_graph(use_consistency=False)
+    graph = build_graph(use_consistency=True)
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     draft = "내일까지 조금 더 고민해 보면 좋을 것 같아요"
     context = DraftContext(now_iso="2026-08-14T18:44:00+09:00")

@@ -251,6 +251,20 @@ def _fetch_live_batch(
     return results, aborted
 
 
+def _leak_safe_few_shot_ids(client: LLMClient, case: GoldenCase, use_rag: bool) -> set[str]:
+    # golden.json의 ambiguous 케이스는 culture_criteria.py 16개 항목 전부의 패러프레이즈다
+    # (T01~T05/F01~F06/D01~D05 각각 정확히 매칭되는 pair_id가 있음) — 그래서 few-shot을
+    # 뭐로 고르든(고정 allowlist든 RAG든) 그 케이스의 원본 항목이 후보에 남아있으면 정답이
+    # 유출된다. 고정 FEW_SHOT_ALLOWLIST={T01,T04,F01,F02,D02,D04}는 이 중 6개 케이스(35%)가
+    # 항상 유출됐고, RAG(코사인 유사도로 동적 선택)는 76%가 유출됐다(2026-08-17 실측,
+    # survey-results-analysis.md 17-5/17-6절) — 둘 다 leave-one-out(자기 자신의 pair_id
+    # 제외)으로 막는다.
+    exclude = {case.pair_id} if case.pair_id else set()
+    if use_rag:
+        return select_few_shot(client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST, exclude_ids=exclude)
+    return FEW_SHOT_ALLOWLIST - exclude
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     mode = os.getenv("DITTO_LLM_MODE", "live")  # LLMClient의 기본값과 반드시 일치시켜야 함(리포트 라벨용)
@@ -279,19 +293,14 @@ def main(argv: list[str] | None = None) -> int:
     if use_rag:
         stage += "-rag"
 
-    # RAG일 때 few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로
-    # 씀 — 임베딩 API를 두 번 부르지 않기 위함(cache.py의 few_shot_ids 파라미터 참고).
-    # exclude_ids=case.pair_id — golden.json의 ambiguous 케이스가 culture_criteria.py
-    # 항목의 패러프레이즈라, 자기 자신의 원본 항목을 후보에서 안 빼면 그게 그대로 뽑혀서
-    # 정답이 유출된다(2026-08-17 실측 — 17/17 중 13개, 76% 유출 확인). leave-one-out으로
-    # 막는다.
+    # few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로 씀 — RAG면
+    # 임베딩 API를 두 번 안 부르려고, 고정 allowlist면 그냥 일관성을 위해. --batch(서로 다른
+    # 케이스가 system prompt를 공유)는 케이스별 커스터마이즈가 안 맞아 그대로 둠 —
+    # sequential/consistency 경로만 적용.
     few_shot_ids_by_case: dict[str, set[str] | None] = {}
-    if use_rag:
+    if not args.batch:
         for case in cases:
-            exclude = {case.pair_id} if case.pair_id else None
-            few_shot_ids_by_case[case.id] = select_few_shot(
-                client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST, exclude_ids=exclude
-            )
+            few_shot_ids_by_case[case.id] = _leak_safe_few_shot_ids(client, case, use_rag)
 
     results: dict[str, ExtractionResult] = {}
     to_call = cases
@@ -322,15 +331,12 @@ def main(argv: list[str] | None = None) -> int:
     elif to_call:
         if consistency_n:
             live_results, aborted = _fetch_live_consistency(
-                client, to_call, consistency_n, consistency_threshold, args.pace,
-                few_shot_ids_by_case if use_rag else None,
+                client, to_call, consistency_n, consistency_threshold, args.pace, few_shot_ids_by_case
             )
         elif args.batch:
             live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace, verify)
         else:
-            live_results, aborted = _fetch_live_sequential(
-                client, to_call, verify, args.pace, few_shot_ids_by_case if use_rag else None
-            )
+            live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace, few_shot_ids_by_case)
         results.update(live_results)
 
     scores = []
