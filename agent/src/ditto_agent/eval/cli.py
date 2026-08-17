@@ -143,21 +143,32 @@ def _fetch_live_sequential(
 
 
 def _fetch_live_consistency(
-    client: LLMClient, cases: list[GoldenCase], n: int, threshold: int, pace: float
+    client: LLMClient,
+    cases: list[GoldenCase],
+    n: int,
+    threshold: int,
+    pace: float,
+    few_shot_ids_by_case: dict[str, set[str] | None] | None = None,
 ) -> tuple[dict, bool]:
     # _fetch_live_sequential()과 같은 케이스별 순회 구조지만 client.extract_batch() 대신
     # client.extract_consistent()를 호출 — 케이스 하나당 API 요청은 여전히 1개(배치 크기 n)라
     # RPD 부담이 늘지 않으면서 실행 간 다수결로 노이즈를 줄인다.
+    # few_shot_ids_by_case가 주어지면(--rag --consistency 같이 씀) main()이 미리 계산해둔
+    # 값을 그대로 씀 — extract_consistent() 안에서 배치 n개 항목이 전부 같은 draft라 few-shot도
+    # 하나만 계산하면 됨(extract_batch()의 few_shot_ids 파라미터 참고).
     results: dict[str, ExtractionResult] = {}
     aborted = False
     stage = f"extract-consistency-n{n}-t{threshold}"
+    if few_shot_ids_by_case:
+        stage += "-rag"
 
     for case in cases:
         ctx = DraftContext(**case.context)
+        few_shot_ids = few_shot_ids_by_case.get(case.id) if few_shot_ids_by_case else None
         try:
-            r = _run_with_hard_timeout(client.extract_consistent, case.draft, ctx, n, threshold)
+            r = _run_with_hard_timeout(client.extract_consistent, case.draft, ctx, n, threshold, few_shot_ids)
             results[case.id] = r
-            cache.save(case.draft, ctx, client.model, r, stage=stage)
+            cache.save(case.draft, ctx, client.model, r, stage=stage, few_shot_ids=few_shot_ids)
             print(f"  {case.id}: ok", flush=True)
         except FutureTimeoutError:
             print(f"  {case.id}: FAILED (하드 타임아웃 {_HARD_TIMEOUT_SECONDS}초 초과, 스레드 방치하고 다음으로)", flush=True)
@@ -240,6 +251,20 @@ def _fetch_live_batch(
     return results, aborted
 
 
+def _leak_safe_few_shot_ids(client: LLMClient, case: GoldenCase, use_rag: bool) -> set[str]:
+    # golden.json의 ambiguous 케이스는 culture_criteria.py 16개 항목 전부의 패러프레이즈다
+    # (T01~T05/F01~F06/D01~D05 각각 정확히 매칭되는 pair_id가 있음) — 그래서 few-shot을
+    # 뭐로 고르든(고정 allowlist든 RAG든) 그 케이스의 원본 항목이 후보에 남아있으면 정답이
+    # 유출된다. 고정 FEW_SHOT_ALLOWLIST={T01,T04,F01,F02,D02,D04}는 이 중 6개 케이스(35%)가
+    # 항상 유출됐고, RAG(코사인 유사도로 동적 선택)는 76%가 유출됐다(2026-08-17 실측,
+    # survey-results-analysis.md 17-5/17-6절) — 둘 다 leave-one-out(자기 자신의 pair_id
+    # 제외)으로 막는다.
+    exclude = {case.pair_id} if case.pair_id else set()
+    if use_rag:
+        return select_few_shot(client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST, exclude_ids=exclude)
+    return FEW_SHOT_ALLOWLIST - exclude
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv if argv is not None else sys.argv[1:])
     mode = os.getenv("DITTO_LLM_MODE", "live")  # LLMClient의 기본값과 반드시 일치시켜야 함(리포트 라벨용)
@@ -251,9 +276,13 @@ def main(argv: list[str] | None = None) -> int:
         cases = cases[: args.limit]
 
     consistency_n = args.consistency
-    use_rag = args.rag and not args.batch and not consistency_n
+    # --rag + --consistency는 같이 쓸 수 있음 — extract_consistent()의 배치 n개 항목이 전부
+    # 같은 draft라 few-shot도 하나만 계산하면 되기 때문(extract_batch()의 일반 eval-batch
+    # 케이스처럼 서로 다른 draft가 한 system prompt를 공유하는 문제가 없음). --batch(서로
+    # 다른 케이스를 한 요청에 묶음)만 여전히 지원 안 함.
+    use_rag = args.rag and not args.batch
     if args.rag and not use_rag:
-        print("--rag는 --batch/--consistency와 같이 못 써서 무시됩니다 (sequential 경로 전용)")
+        print("--rag는 --batch와 같이 못 써서 무시됩니다 (sequential/consistency 경로 전용)")
 
     client = LLMClient(use_rag=use_rag)
     verify = args.verify
@@ -264,14 +293,14 @@ def main(argv: list[str] | None = None) -> int:
     if use_rag:
         stage += "-rag"
 
-    # RAG일 때 few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로
-    # 씀 — 임베딩 API를 두 번 부르지 않기 위함(cache.py의 few_shot_ids 파라미터 참고).
+    # few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로 씀 — RAG면
+    # 임베딩 API를 두 번 안 부르려고, 고정 allowlist면 그냥 일관성을 위해. --batch(서로 다른
+    # 케이스가 system prompt를 공유)는 케이스별 커스터마이즈가 안 맞아 그대로 둠 —
+    # sequential/consistency 경로만 적용.
     few_shot_ids_by_case: dict[str, set[str] | None] = {}
-    if use_rag:
+    if not args.batch:
         for case in cases:
-            few_shot_ids_by_case[case.id] = select_few_shot(
-                client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST
-            )
+            few_shot_ids_by_case[case.id] = _leak_safe_few_shot_ids(client, case, use_rag)
 
     results: dict[str, ExtractionResult] = {}
     to_call = cases
@@ -302,14 +331,12 @@ def main(argv: list[str] | None = None) -> int:
     elif to_call:
         if consistency_n:
             live_results, aborted = _fetch_live_consistency(
-                client, to_call, consistency_n, consistency_threshold, args.pace
+                client, to_call, consistency_n, consistency_threshold, args.pace, few_shot_ids_by_case
             )
         elif args.batch:
             live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace, verify)
         else:
-            live_results, aborted = _fetch_live_sequential(
-                client, to_call, verify, args.pace, few_shot_ids_by_case if use_rag else None
-            )
+            live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace, few_shot_ids_by_case)
         results.update(live_results)
 
     scores = []

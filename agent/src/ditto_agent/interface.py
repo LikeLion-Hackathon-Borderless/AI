@@ -26,8 +26,9 @@ def configure(
     conflict_checker: ConflictChecker | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     use_verify: bool = False,
-    use_consistency: bool = True,
+    use_consistency: bool = False,
     consistency_n: int = 3,
+    use_rag: bool = False,
 ) -> None:
     global _graph
     with _graph_lock:
@@ -37,6 +38,7 @@ def configure(
             use_verify=use_verify,
             use_consistency=use_consistency,
             consistency_n=consistency_n,
+            use_rag=use_rag,
         )
 
 

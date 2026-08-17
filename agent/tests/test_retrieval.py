@@ -98,3 +98,31 @@ def test_select_few_shot_falls_back_on_dimension_mismatch(tmp_path, monkeypatch)
 
     result = retrieval.select_few_shot(three_dim_embed, "query", fallback={"FALLBACK"}, cache_path=cache_path)
     assert result == {"FALLBACK"}
+
+
+def test_select_few_shot_excludes_specified_ids(tmp_path):
+    # leave-one-out — golden set 평가에서 케이스 자신의 원본 판단기준표 항목이 뽑히는 걸
+    # 막는 용도(2026-08-17 실측으로 76% 유출 확인, 리키지 방지책).
+    vectors = {"close": [1.0, 0.0], "second": [0.9, 0.1], "query": [0.95, 0.05]}
+    def fn(text: str) -> list[float]:
+        return vectors[text]
+
+    import ditto_agent.llm.retrieval as retrieval_module
+
+    original_rows = retrieval_module._CANDIDATE_ROWS
+    retrieval_module._CANDIDATE_ROWS = [
+        {"id": "A", "phrase": "close"},
+        {"id": "B", "phrase": "second"},
+    ]
+    try:
+        without_exclusion = retrieval_module.select_few_shot(
+            fn, "query", k=1, fallback=set(), cache_path=tmp_path / "c1.json"
+        )
+        assert without_exclusion == {"A"}
+
+        with_exclusion = retrieval_module.select_few_shot(
+            fn, "query", k=1, fallback=set(), cache_path=tmp_path / "c2.json", exclude_ids={"A"}
+        )
+        assert with_exclusion == {"B"}
+    finally:
+        retrieval_module._CANDIDATE_ROWS = original_rows
