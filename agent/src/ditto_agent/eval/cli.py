@@ -49,6 +49,22 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=float(os.getenv("DITTO_EVAL_PACE_SECONDS", "2.0")),
         help="live 모드에서 호출 사이 대기 시간(초) — 분당 요청 한도(TPM/RPM) 회피용",
     )
+    parser.add_argument(
+        "--consistency",
+        type=int,
+        default=0,
+        help="0(기본, 꺼짐)보다 크면 케이스당 extract_consistent(n=이 값)로 self-consistency"
+        " 다수결을 씀 — seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 없어지는 게"
+        " 실측으로 확인돼(survey-results-analysis.md 13절) 만든 구조적 대안. 케이스당 API 호출"
+        " 수는 여전히 1번(배치 크기가 n일 뿐)이라 RPD 부담은 안 늘어남. --batch/--verify와는"
+        " 같이 못 씀(둘 다 무시되고 이 경로가 우선).",
+    )
+    parser.add_argument(
+        "--consistency-threshold",
+        type=int,
+        default=None,
+        help="--consistency일 때만 씀 — 카테고리 채택에 필요한 최소 득표 수. 생략하면 과반(n//2+1)",
+    )
     return parser.parse_args(argv)
 
 
@@ -92,6 +108,35 @@ def _fetch_live_sequential(
             if verify:
                 verified = _run_with_hard_timeout(client.verify, case.draft, r.ambiguities)
                 r = r.model_copy(update={"ambiguities": verified})
+            results[case.id] = r
+            cache.save(case.draft, ctx, client.model, r, stage=stage)
+            print(f"  {case.id}: ok", flush=True)
+        except FutureTimeoutError:
+            print(f"  {case.id}: FAILED (하드 타임아웃 {_HARD_TIMEOUT_SECONDS}초 초과, 스레드 방치하고 다음으로)", flush=True)
+        except Exception as exc:  # noqa: BLE001 — 실패해도 이미 얻은 결과는 살리고 다음 케이스로
+            print(f"  {case.id}: FAILED ({exc.__class__.__name__}) {str(exc)[:150]}", flush=True)
+            if type(exc).__name__ == "RateLimitError":
+                aborted = True
+                break
+        time.sleep(pace)
+
+    return results, aborted
+
+
+def _fetch_live_consistency(
+    client: LLMClient, cases: list[GoldenCase], n: int, threshold: int, pace: float
+) -> tuple[dict, bool]:
+    # _fetch_live_sequential()과 같은 케이스별 순회 구조지만 client.extract_batch() 대신
+    # client.extract_consistent()를 호출 — 케이스 하나당 API 요청은 여전히 1개(배치 크기 n)라
+    # RPD 부담이 늘지 않으면서 실행 간 다수결로 노이즈를 줄인다.
+    results: dict[str, ExtractionResult] = {}
+    aborted = False
+    stage = f"extract-consistency-n{n}-t{threshold}"
+
+    for case in cases:
+        ctx = DraftContext(**case.context)
+        try:
+            r = _run_with_hard_timeout(client.extract_consistent, case.draft, ctx, n, threshold)
             results[case.id] = r
             cache.save(case.draft, ctx, client.model, r, stage=stage)
             print(f"  {case.id}: ok", flush=True)
@@ -188,7 +233,11 @@ def main(argv: list[str] | None = None) -> int:
 
     client = LLMClient()
     verify = args.verify
-    stage = "extract+verify" if verify else "extract"
+    consistency_n = args.consistency
+    consistency_threshold = args.consistency_threshold or (consistency_n // 2 + 1 if consistency_n else 0)
+    stage = f"extract-consistency-n{consistency_n}-t{consistency_threshold}" if consistency_n else (
+        "extract+verify" if verify else "extract"
+    )
     results: dict[str, ExtractionResult] = {}
     to_call = cases
 
@@ -205,12 +254,19 @@ def main(argv: list[str] | None = None) -> int:
     aborted = False
     if client.mode == "mock":
         for case in to_call:
-            r = client.extract(case.draft, DraftContext(**case.context))
-            if verify:
-                r = r.model_copy(update={"ambiguities": client.verify(case.draft, r.ambiguities)})
+            if consistency_n:
+                r = client.extract_consistent(case.draft, DraftContext(**case.context), consistency_n, consistency_threshold)
+            else:
+                r = client.extract(case.draft, DraftContext(**case.context))
+                if verify:
+                    r = r.model_copy(update={"ambiguities": client.verify(case.draft, r.ambiguities)})
             results[case.id] = r
     elif to_call:
-        if args.batch:
+        if consistency_n:
+            live_results, aborted = _fetch_live_consistency(
+                client, to_call, consistency_n, consistency_threshold, args.pace
+            )
+        elif args.batch:
             live_results, aborted = _fetch_live_batch(client, to_call, args.batch_size, args.pace, verify)
         else:
             live_results, aborted = _fetch_live_sequential(client, to_call, verify, args.pace)

@@ -1,5 +1,10 @@
 from ditto_agent.eval import cache
-from ditto_agent.eval.cli import _chunks, _fetch_live_batch, _fetch_live_sequential
+from ditto_agent.eval.cli import (
+    _chunks,
+    _fetch_live_batch,
+    _fetch_live_consistency,
+    _fetch_live_sequential,
+)
 from ditto_agent.eval.golden import GoldenCase
 from ditto_agent.schema import AmbiguityItem, ExtractionResult
 
@@ -147,3 +152,45 @@ def test_fetch_live_batch_skips_verify_batch_when_disabled(monkeypatch):
     assert not aborted
     assert client.verify_batch_calls == []
     assert results["X"] == _RESULT_A  # verify 생략 — 1차 결과 그대로
+
+
+class _FakeConsistencyClient:
+    model = "fake-model"
+
+    def __init__(self, response=None, error=None):
+        self._response = response
+        self._error = error
+        self.consistency_calls: list[tuple] = []
+
+    def extract_consistent(self, draft, context, n, threshold):
+        self.consistency_calls.append((draft, n, threshold))
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+def test_fetch_live_consistency_calls_extract_consistent_per_case(monkeypatch):
+    monkeypatch.setattr(cache, "save", lambda *a, **k: None)
+    client = _FakeConsistencyClient(response=_RESULT_A)
+    cases = [_case("X"), _case("Y")]
+
+    results, aborted = _fetch_live_consistency(client, cases, n=3, threshold=2, pace=0)
+
+    assert not aborted
+    assert results == {"X": _RESULT_A, "Y": _RESULT_A}
+    assert client.consistency_calls == [("draft-X", 3, 2), ("draft-Y", 3, 2)]
+
+
+def test_fetch_live_consistency_aborts_on_rate_limit_but_keeps_partial_results(monkeypatch):
+    monkeypatch.setattr(cache, "save", lambda *a, **k: None)
+
+    class RateLimitError(Exception):
+        pass
+
+    client = _FakeConsistencyClient(error=RateLimitError("429"))
+    cases = [_case("X"), _case("Y")]
+
+    results, aborted = _fetch_live_consistency(client, cases, n=3, threshold=2, pace=0)
+
+    assert aborted
+    assert results == {}

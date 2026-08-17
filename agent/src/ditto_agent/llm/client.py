@@ -1,4 +1,5 @@
 import os
+from collections import Counter
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -15,6 +16,7 @@ from ditto_agent.llm.prompts import (
     build_verify_user_prompt,
 )
 from ditto_agent.schema import (
+    AmbiguityCategory,
     AmbiguityItem,
     AmbiguityList,
     BatchAmbiguityList,
@@ -90,6 +92,49 @@ def _sampling_kwargs(model: str) -> dict:
     if not model.startswith(_REASONING_MODEL_PREFIXES):
         kwargs["temperature"] = 0
     return kwargs
+
+
+def _majority_string(values, allow_none: bool = False) -> str | None:
+    # extract_consistent()의 스칼라 필드용 다수결 — None도 후보값 취급해서 "n번 중
+    # m번은 아예 값이 없었다"는 것도 다수결에 반영한다(allow_none=False인 필드는
+    # 스키마상 None이 안 나오므로 신경 안 써도 됨). 동률이면 Counter.most_common의
+    # 첫 항목(처음 등장한 값)을 그대로 씀 — 완전한 결정성보다 "그럴듯한 대표값 하나"면
+    # 충분한 용도라 과설계하지 않음.
+    counted = Counter(v for v in values if allow_none or v is not None)
+    if not counted:
+        return None
+    return counted.most_common(1)[0][0]
+
+
+def _vote_extraction(results: list[ExtractionResult], threshold: int) -> ExtractionResult:
+    # extract_consistent()의 핵심 로직 — API 호출과 분리해둬서 테스트가 실제 LLM 응답
+    # 없이 순수 함수로 다수결만 검증할 수 있게 함. 카테고리는 "n번 중 threshold번 이상
+    # 등장했는지"로 채택 여부를 정하고, 대표 AmbiguityItem은 채택된 카테고리가 처음
+    # 등장한 실행의 것을 그대로 씀(문구를 다시 합성하지 않음 — 실제 모델 출력을 유지).
+    category_votes: Counter[AmbiguityCategory] = Counter()
+    representative: dict[AmbiguityCategory, AmbiguityItem] = {}
+    for result in results:
+        seen_categories = {item.category for item in result.ambiguities}
+        for category in seen_categories:
+            category_votes[category] += 1
+            if category not in representative:
+                representative[category] = next(item for item in result.ambiguities if item.category == category)
+
+    winning_ambiguities = [
+        representative[category] for category, votes in category_votes.items() if votes >= threshold
+    ]
+
+    base = results[0]
+    return base.model_copy(
+        update={
+            "task": _majority_string(r.task for r in results),
+            "assignee": _majority_string((r.assignee for r in results), allow_none=True),
+            "deadline_raw": _majority_string((r.deadline_raw for r in results), allow_none=True),
+            "request_type": _majority_string(r.request_type for r in results),
+            "decision_status": _majority_string(r.decision_status for r in results),
+            "ambiguities": winning_ambiguities,
+        }
+    )
 
 
 class LLMClient:
@@ -234,6 +279,18 @@ class LLMClient:
             )
             for item in parsed.items
         }
+
+    def extract_consistent(
+        self, draft: str, context: DraftContext, n: int = 3, threshold: int = 2
+    ) -> ExtractionResult:
+        # seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 사라진다는 걸 실측으로
+        # 확인함(survey-results-analysis.md 13절) — 같은 메시지를 n번 독립 추출해 카테고리
+        # 단위로 다수결하면 이 노이즈를 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
+        # 같은 (draft, context)를 n개 항목처럼 묶어 보내므로 API 호출 수는 그대로 1번(배치
+        # 크기만 n)이라 RPD 부담이 늘지 않는다.
+        runs = self.extract_batch([(draft, context)] * n)
+        results = [runs[i] for i in range(n)]
+        return _vote_extraction(results, threshold)
 
     def translate_card_fields(
         self, task: str, request_type: str, interpretation_note: str | None, notes: list[str], target_lang: str
