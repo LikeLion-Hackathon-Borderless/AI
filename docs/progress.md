@@ -636,3 +636,60 @@ end-to-end 스모크 테스트 통과 확인.
 - 전체 커밋: `19f7fad`(timeout) → `f9aa3e5`(verify 최초 구현) → `9ebcdfe`(하드
   타임아웃+RPD 원인 규명) → `a261927`(배치 verify+모델 전환) → `ee45301`(verify
   기본 끔) — PR #1에 전부 반영, push 완료.
+
+## 2026-08-17 (계속) — 4가지 기법 실험 설계 → E0/E1 실측 → 시드 고정으로 재현성 확보
+
+사용자가 "골든셋이 잘못된 거 아냐?"라고 의심 — `golden.json`의 T02-explicit/
+F02-explicit 원문을 직접 확인해 요일·시각·시간대/지칭 인물이 전부 명시돼 있음을
+검증, 골든셋 자체는 옳고 few-shot `reason`의 통계 인용 문구가 과탐지를 유발한
+것으로 결론. 이후 "LangChain vs LangGraph, 성능 더 높이려면?" 질문에 RAG/규칙 기반
+후처리/self-consistency/조건 분기 4가지를 제시했고, 사용자가 4개를 다 고려한 실험
+설계를 지시 → `E0(reason-trim) → E1(규칙 필터) → E2(self-consistency) → E3(RAG)`
+누적 매트릭스로 plan mode에서 설계, 승인받음.
+
+**E0(reason-trim)**: `culture_criteria.py` reason에서 통계 인용 제거, gpt-5-mini
+재측정 → recall=0.905, precision=**0.442**(직전 0.679보다 악화, 새로운 교차
+카테고리 오탐 패턴). "reason 장황 → 과탐지" 가설을 정면으로 반박하는 결과라
+`extract()` 자체의 샘플링 노이즈가 상당하다는 결론에 도달(같은 세션 안에서
+0.739→0.655→0.679→0.500→0.442로 등락) — self-consistency와 시드 고정이 왜
+필요한지 사용자에게 설명.
+
+**E1(규칙 기반 TIME 후처리)**: `llm/postfilter.py` 신설 —
+`filter_false_positive_time()`이 요일/날짜+시각(+시간대)가 다 명시되고 모호 마커가
+없는 TIME 오탐을 API 호출 없이 코드로 제거. `extract()`/`extract_batch()` 리턴
+직전에 적용. 테스트 9개 추가.
+
+**캐시 버그 발견**: E1 첫 측정이 E0와 소수점까지 똑같은 precision을 내서 조사 —
+`eval/cache.py` 캐시 키가 프롬프트 해시만 반영하고 postfilter 같은 순수 코드
+변경은 못 감지해 옛날(필터 적용 전) 응답을 계속 재사용하고 있었음. `_code_hash()`
+(postfilter.py 소스 해시)를 키에 추가해 수정.
+
+**측정 시도 3번 전부 RPD로 조기 종료**: gpt-5-mini 캐시 버그로 무효 →
+`RateLimitError: RPD Limit 50, Used 50`(gpt-5-mini도 소진) → 사용자가
+AskUserQuestion에서 "다른 모델로(gpt-4o-mini)" 선택 → gpt-4o-mini로 36/36 완주:
+recall=0.524, precision=**0.786**(이번 세션 최고 precision, 최저 recall). 세 모델
+(gpt-5/gpt-5-mini/gpt-4o-mini) 전부 오늘 RPD 소진 확인 — E1의 순수 효과를 모델
+교체 없이 분리 측정 못 함.
+
+**시드 고정("시드를 다 고정해서 재현성을 1차적으로 확보해")**: 실측으로 드러난
+런투런 노이즈(위 등락)를 줄이려고 `LLMClient`의 5개 `.parse()` 호출 전부에
+`seed=42`(+ non-reasoning 모델은 `temperature=0`도) 적용. reasoning 계열
+(`gpt-5*`, `o1/o3/o4*`)은 temperature 강제가 거부될 수 있어 seed만 건다. gpt-4o-mini
+로 라이브 테스트해 `system_fingerprint`가 실제로 반환됨을 확인. `eval/cache.py`의
+`_code_hash()`도 `client.py` 소스까지 해시하도록 확장(같은 클래스의 스테일 캐시
+버그가 이 변경으로도 재발할 수 있어서 — postfilter 때와 동일 패턴).
+
+전체 45개 테스트 통과, ruff 클린. 커밋: `52c1981`(E1 postfilter) → `dead0f6`(시드
+고정) → `773194f`(E1 실측 문서화). 상세 수치·해석은
+`docs/survey-results-analysis.md` 11~12절.
+
+### Next
+
+- 시드 고정 효과 검증: 같은 설정으로 `ditto-eval`을 두 번 돌려 결과가 정확히
+  같은지 확인(오늘 남은 RPD 있는 모델로) — 아직 미실행
+- E2(self-consistency): `extract_batch()`를 재사용해 같은 draft를 n=3으로 묶어
+  카테고리 다수결 — 코드 설계는 plan 파일에 있음, 미착수
+- E3(RAG 동적 few-shot): 시간 되면, 미착수
+- `.env`(gpt-4o-mini) vs `.env.example`(gpt-5-mini) 최종 모델 선택 후 일치시킬 것
+- 오늘 gpt-5/gpt-5-mini/gpt-4o-mini 전부 RPD 소진 — 내일 재측정 필요, 그 전까지는
+  라이브 eval 호출 자제
