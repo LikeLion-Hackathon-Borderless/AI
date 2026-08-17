@@ -281,11 +281,16 @@ def main(argv: list[str] | None = None) -> int:
 
     # RAG일 때 few-shot 선택을 여기서 한 번만 계산해서 캐시 조회·실제 호출 양쪽에 그대로
     # 씀 — 임베딩 API를 두 번 부르지 않기 위함(cache.py의 few_shot_ids 파라미터 참고).
+    # exclude_ids=case.pair_id — golden.json의 ambiguous 케이스가 culture_criteria.py
+    # 항목의 패러프레이즈라, 자기 자신의 원본 항목을 후보에서 안 빼면 그게 그대로 뽑혀서
+    # 정답이 유출된다(2026-08-17 실측 — 17/17 중 13개, 76% 유출 확인). leave-one-out으로
+    # 막는다.
     few_shot_ids_by_case: dict[str, set[str] | None] = {}
     if use_rag:
         for case in cases:
+            exclude = {case.pair_id} if case.pair_id else None
             few_shot_ids_by_case[case.id] = select_few_shot(
-                client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST
+                client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST, exclude_ids=exclude
             )
 
     results: dict[str, ExtractionResult] = {}
