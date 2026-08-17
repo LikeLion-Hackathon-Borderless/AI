@@ -850,3 +850,72 @@ few_shot_ids 반영(안 하면 draft마다 다른 few-shot을 썼는데도 캐�
   키에 선택된 few_shot_ids 반영(같은 stale-cache 버그 재발 방지), `eval/cli.py`에
   `--rag` 플래그 추가 후 실측
 - 위 세 가지 완료 후에만 E3 실측(RPD 여유 있는 모델로) 진행
+
+## 2026-08-17 (계속) — o3-mini 36케이스 전체 검증 → 최종 모델 재확정 + E2 실제 배선
+
+사용자가 "o3-mini 20케이스가 전체 테스트냐, 전체에서도 잘되면 이걸로 확정해도
+된다"고 질문 — o3-mini는 RPD 여유가 많이 남아 있어(149/150) 바로 36케이스 전체로
+검증함.
+
+**o3-mini + E2(만장일치, n=3), 36케이스 전체**: recall=**0.857**, precision=**0.750**
+— 이번 세션 최고 균형 결과. DECISION_STATUS recall도 0.667로(gpt-4o-mini는
+0.167이었음) 훨씬 나음.
+
+**최종 모델을 gpt-4o-mini → o3-mini로 변경**(오늘 §15에서 내린 결정을 대체) —
+이유: gpt-4o-mini 결정은 self-consistency 없이 쉬운 12케이스만 본 것이었지만,
+이 o3-mini 결과는 **실제 채택한 설정(만장일치 포함) 그대로 36케이스 전체**로 검증한
+유일한 데이터. `.env`/`.env.example`/`LLMClient` 코드 기본값 전부 o3-mini로 갱신.
+
+**E2를 실제 프로덕션에 배선**: 지금까지 self-consistency는 eval CLI(`--consistency`)
+전용이었고 실제 그래프의 `extract_node`는 plain `extract()`만 불렀음 —
+`graph/nodes.py`에 `make_extract_node(use_consistency, n)` 팩토리 추가,
+`graph/build.py`/`interface.configure()`에 `use_consistency: bool = True`(기본
+켜짐, verify와 반대로 실측이 긍정적이라 opt-out 방식) 노출.
+
+**배선 중 발견한 진짜 버그**: `_vote_extraction()`이 카테고리 순서를 `set`
+컴프리헨션으로 만들어서, Python 문자열 hash seed가 프로세스마다 랜덤이라
+**ambiguity 순서가 실행마다 바뀌는** 문제가 있었음(그래프 interrupt 순서 테스트
+2개가 간헐적으로 깨짐 — 처음엔 안 깨지다가 프로세스 재시작하니 깨짐). `dict.fromkeys()`
+로 첫 등장 순서를 결정적으로 보존하도록 수정, 회귀 테스트 추가, 5번 재실행으로
+안정성 확인.
+
+53→69개 테스트 통과, ruff 클린. 상세: `docs/survey-results-analysis.md` 16절.
+
+### Next
+
+- DECISION_STATUS가 o3-mini에서도 여전히 최약점(0.667) — E3(RAG)가 여기 도움되는지
+  검증이 다음 우선순위
+- E3 실제 배선(`extract()`/`extract_batch()` 연결, 캐시 키 반영, `--rag` 플래그) 후
+  o3-mini로 측정
+- gpt-4o-mini는 이제 프로덕션 모델이 아니지만 §15 비교 데이터는 여전히 유효 —
+  나중에 RPD 풀리면 gpt-4o-mini+E2(만장일치)도 36케이스 전체로 검증해 o3-mini와
+  직접 비교하면 더 확실해짐
+
+## 2026-08-17 (계속) — E3(RAG) 실제 배선 완료, 배선 중 진짜 버그 발견·수정
+
+`LLMClient(use_rag=...)`, `extract(few_shot_ids=...)`, `eval/cache.py`(캐시 키에
+few_shot_ids 반영), `eval/cli.py --rag` 플래그까지 전부 연결 — 지난 커밋
+(`04c71e3`)까지는 부품만 있고 안 꽂혀 있었는데 이제 실제로 동작함.
+
+**배선 중 진짜 버그 발견**: 첫 라이브 실행에서 `ValueError: zip() argument 2 is
+shorter than argument 1`로 즉시 죽음 — `test_retrieval.py`의 테스트 하나가
+`select_few_shot()`을 `cache_path` 오버라이드 없이 호출해서 **레포 루트의 진짜
+`.criteria_embeddings.json`에 테스트용 가짜 2차원 벡터를 실제로 써버렸고**, 라이브
+실행이 그 오염된 캐시를 읽다가 진짜 1536차원 임베딩과 안 맞아 터진 것. 테스트에
+`tmp_path` 격리 추가 + `select_few_shot()` 자체도 코사인 계산 단계 실패를 fallback
+대상에 포함하도록 방어 강화, 회귀 테스트 추가. 72개 테스트 통과.
+
+**실측은 불완전**: gpt-4.1-nano로 `--rag --limit 10`은 배선 확인용으로 성공
+(1.0/1.0), 36케이스 전체 시도는 **28/36에서 RPD 소진**으로 중단 — 같은 모델의
+RAG-off 36케이스 베이스라인이 없어 RAG 자체 효과를 판단할 근거가 부족함. 프로덕션
+기본값은 `use_rag=False`(opt-in) 유지 — verify-loop과 같은 원칙("검증 전엔 기본
+켜지 않는다"). 상세: `docs/survey-results-analysis.md` 17절.
+
+커밋 요약: `b0a10c7`(E2 프로덕션 배선+정렬 버그 수정) → RAG 배선(다음 커밋).
+
+### Next
+
+- RAG on/off를 **같은 모델·같은 36케이스**로 직접 비교(RPD 리셋 후) — 지금까지는
+  모델도 부분집합도 달라서 결론 못 냄
+- 결론 나면 `use_rag` 기본값 조정 여부 결정
+- DECISION_STATUS(o3-mini 기준 0.667)가 RAG로 개선되는지가 핵심 관심사

@@ -581,6 +581,100 @@ precision~0.7~0.9대 등락, DECISION_STATUS가 약점이라는 것까지)을 �
 아키텍처 변경도 불필요. gpt-5-nano는 **차기 검증 후보로 기록**만 해두고 이번엔
 전환하지 않음.
 
+## 16. 최종 모델 재확정 — o3-mini로 변경 (§15의 gpt-4o-mini 결정을 대체)
+
+§15에서 "검증량이 많다"는 이유로 gpt-4o-mini를 유지했는데, 그 직후 사용자가 "o3-mini
+20케이스가 전체 테스트냐, 전체에서도 잘되면 이걸로 확정해도 된다"고 질문 — 실제로
+**o3-mini는 아직 RPD 여유가 많이 남아 있어(149/150) 오늘 안에 36케이스 전체 검증이
+가능**했다.
+
+**o3-mini + E2(만장일치, n=3)로 36케이스 전체 실행**(`20260817T043723Z`):
+
+| 카테고리 | recall | precision | TP | FP | FN |
+|---|---|---|---|---|---|
+| 전체 | **0.857** | **0.750** | 18 | 6 | 3 |
+| TIME | 1.000 | 0.889 | 8 | 1 | 0 |
+| REQUEST_INTENT | 0.857 | 0.750 | 6 | 2 | 1 |
+| DECISION_STATUS | 0.667 | 0.571 | 4 | 3 | 2 |
+
+**이번 세션 전체 36케이스 결과와 비교하면 최고 균형**: gpt-4o-mini의 DECISION_STATUS
+recall이 0.167까지 떨어졌던 것과 달리 o3-mini는 0.667 — 여전히 가장 약한
+카테고리지만 훨씬 낫다. recall/precision 트레이드오프도 이번 세션 다른 어떤 조합
+(verify-loop, reason-trim, E1 단독 등)보다 균형 잡혀 있다.
+
+**결정적 차이 — 이건 gpt-4o-mini로는 직접 검증한 적이 없는 조건**: §15의 gpt-4o-mini
+결정은 self-consistency 없이 12케이스 쉬운 부분집합만 본 것이었다. 지금 이 o3-mini
+결과는 **실제로 프로덕션에 채택하기로 한 설정(E2 만장일치 포함) 그대로, 36케이스
+전체**로 검증한 유일한 데이터다 — 같은 기준으로 gpt-4o-mini를 본 적이 없으니
+직접 비교는 못 하지만, "실제로 쓸 설정으로, 전체 골든셋으로 검증됨"이라는 점에서
+o3-mini가 더 신뢰할 수 있는 근거를 갖췄다.
+
+**최종 결정: o3-mini로 변경**(§15의 gpt-4o-mini 결정을 대체). `.env`/`.env.example`
+갱신, `LLMClient`의 코드 레벨 기본값(`os.getenv` fallback)도 `o3-mini`로 동기화.
+부가적으로 RPD 여유(150/day, 다른 모델의 3배)도 이 계정의 무료 티어 제약 하에서
+실질적 장점.
+
+**동시에 처리한 것**: self-consistency(E2)를 실제 프로덕션 그래프에 배선
+(`graph/nodes.py`의 `make_extract_node(use_consistency, n)`, `graph/build.py`/
+`interface.configure()`에 `use_consistency: bool = True`(기본 켜짐) 노출) — 지금까지
+`--consistency`는 eval 전용이었고 실제 `extract_node`는 plain `extract()`만
+불렀는데, 이제 실사용에도 반영됨. 배선 도중 진짜 버그 하나 발견: `_vote_extraction()`
+이 카테고리 순서를 `set` 컴프리헨션으로 만들어서, Python의 문자열 hash seed가
+프로세스마다 랜덤이라 **실행마다 ambiguity 순서가 바뀌는** 문제가 있었음(그래프
+interrupt 순서 테스트가 간헐적으로 깨짐) — `dict.fromkeys()`로 첫 등장 순서를
+보존하도록 수정, 회귀 테스트 추가, 프로세스 5번 재실행해서 안정성 확인.
+
+**한계**: DECISION_STATUS는 여전히 가장 약함(0.667) — E3(RAG)가 여기 도움이 될지가
+다음 검증 대상.
+
+## 17. E3(RAG) 실제 배선 완료 + 실측 시도, 진짜 버그 하나 발견·수정
+
+사용자가 "RAG는 꽂을까 말까, 비어있는 다른 모델로 일단 돌려볼까"라고 제안 — 지난
+세션까지 부품만 있고 안 꽂혀 있던 RAG를 실제로 연결함.
+
+**배선 내용**:
+- `LLMClient.__init__(use_rag: bool = False)` 추가(opt-in, 아직 검증 전이라 기본
+  꺼짐 — verify-loop과 같은 신중함).
+- `extract(draft, context, few_shot_ids=None)` — `few_shot_ids`를 명시적으로 받으면
+  그대로 쓰고, 안 받았는데 `use_rag=True`면 그때 `select_few_shot()`으로 직접
+  계산(임베딩 중복 호출 방지).
+- `eval/cache.py`의 `_cache_key()`/`load()`/`save()`에 `few_shot_ids` 파라미터
+  추가 — `build_system_prompt(few_shot_ids=...)`에 그대로 넘겨서 prompt_hash에
+  자연히 반영되게 함(draft마다 다른 few-shot을 썼는데 캐시가 못 감지하는
+  stale-cache 버그가 RAG에서도 재발하지 않도록 — postfilter.py 때 이미 한 번
+  겪었던 것과 같은 클래스).
+- `eval/cli.py`에 `--rag` 플래그 추가(sequential 경로 전용, `--batch`/`--consistency`와
+  같이 쓰면 무시). `main()`이 케이스별 few_shot_ids를 캐시 조회 시점에 한 번만
+  계산해서 실제 호출까지 그대로 재사용(임베딩 API 이중 호출 방지).
+- `prompts._FEW_SHOT_ALLOWLIST` → `FEW_SHOT_ALLOWLIST`로 공개(client.py/cli.py가
+  RAG 폴백 값으로 씀).
+
+**진짜 버그 발견**: 처음 라이브로 돌렸을 때 `ValueError: zip() argument 2 is
+shorter than argument 1`로 즉시 죽음 — 원인 추적 결과, `test_retrieval.py`의 한
+테스트가 `select_few_shot()`을 `cache_path` 오버라이드 없이 호출해서 **레포 루트의
+진짜 `.criteria_embeddings.json`에 가짜 2차원 벡터를 실제로 써버렸고**, 이후 라이브
+실행이 그 오염된 캐시를 읽다가 진짜 임베딩(1536차원)과 차원이 안 맞아 터진 것.
+두 가지로 수정: (1) 그 테스트에 `tmp_path` 기반 `cache_path` 지정, (2)
+`select_few_shot()` 자체도 차원 불일치 같은 계산 단계 실패를 fallback 대상에
+포함하도록 try 블록 확장(임베딩 호출 성공 후 코사인 계산에서 터져도 전체 파이프라인이
+안 죽게). 회귀 테스트 추가.
+
+**실측 결과(불완전 — 결론 유보)**:
+- gpt-4.1-nano, `--rag --limit 10`(T01~T05만): recall=1.000, precision=1.000 —
+  배선이 실제로 동작함을 확인하는 용도로는 충분.
+- gpt-4.1-nano, `--rag`(36케이스 전체 시도): **RPD가 28/36에서 소진**돼 중단
+  (D04-ambiguous에서 RateLimitError) — 부분 결과 recall=0.714, precision=0.526.
+  이건 (a) 불완전한 부분집합(D04/D05/C02/COMP 빠짐)이고 (b) 같은 모델의 RAG 없는
+  36케이스 베이스라인이 없어서 **RAG 자체의 효과인지 판단 불가**. o3-mini의
+  RAG 없는 36케이스 결과(0.857/0.750, §16)보다 낮지만 모델도 다르고 부분집합도
+  달라 직접 비교 무의미.
+
+**결론**: RAG는 **기술적으로는 프로덕션·eval 양쪽에 정상 배선 완료**됐고 관련
+테스트(72개 전체 통과, 새 버그 회귀 테스트 포함)도 통과하지만, **실제 효과는
+아직 미검증** — RPD 예산이 오늘 다 소진돼 같은 모델·같은 36케이스로 RAG on/off
+비교를 못 함. 프로덕션 기본값은 `use_rag=False`(opt-in) 유지 — verify-loop 때처럼
+"검증 없이 기본값으로 켜지 않는다"는 원칙 그대로 적용.
+
 ## Next
 
 - `docs/문화_판단기준표_초안.md`의 D01/D03/D05/F03/F04 설명을 "모호함" → "국내 컨센서스는
