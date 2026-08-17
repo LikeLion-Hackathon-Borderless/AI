@@ -76,6 +76,22 @@ def _mock_extract(draft: str, context: DraftContext) -> ExtractionResult:
     )
 
 
+# 2026-08-17 세션에서 같은 프롬프트로도 실행마다 recall/precision이 크게 흔들리는 걸
+# 반복 확인(0.739→0.655→0.679→0.442 등) — 어느 정도는 extract() 자체의 샘플링
+# 랜덤성 때문이라, seed를 고정해 재현성을 1차로 확보한다. temperature=0은 reasoning
+# 계열 모델(gpt-5*, o1/o3/o4*)이 거부하는 경우가 있어 그 계열은 빼고 seed만 건다
+# (seed는 더 폭넓게 지원됨 — gpt-4o-mini에서 직접 확인).
+_SAMPLING_SEED = 42
+_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _sampling_kwargs(model: str) -> dict:
+    kwargs: dict = {"seed": _SAMPLING_SEED}
+    if not model.startswith(_REASONING_MODEL_PREFIXES):
+        kwargs["temperature"] = 0
+    return kwargs
+
+
 class LLMClient:
     def __init__(self) -> None:
         # 기본값은 "mock"이 아니라 "live" — DITTO_LLM_MODE를 아예 안 정해둔 배포는 조용히
@@ -118,6 +134,7 @@ class LLMClient:
                 {"role": "user", "content": build_user_prompt(draft, context.sender_tz, context.receiver_tz, now_iso)},
             ],
             response_format=ExtractionResult,
+            **_sampling_kwargs(self.model),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -138,6 +155,7 @@ class LLMClient:
                 {"role": "user", "content": build_verify_user_prompt(draft, [a.model_dump() for a in ambiguities])},
             ],
             response_format=AmbiguityList,
+            **_sampling_kwargs(self.model),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -168,6 +186,7 @@ class LLMClient:
                 {"role": "user", "content": build_batch_verify_user_prompt(entries)},
             ],
             response_format=BatchAmbiguityList,
+            **_sampling_kwargs(self.model),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -200,6 +219,7 @@ class LLMClient:
                 {"role": "user", "content": build_batch_user_prompt(entries)},
             ],
             response_format=BatchExtractionResult,
+            **_sampling_kwargs(self.model),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
@@ -239,6 +259,7 @@ class LLMClient:
                 },
             ],
             response_format=CardTranslation,
+            **_sampling_kwargs(self.model),
         )
         parsed = completion.choices[0].message.parsed
         if parsed is None:
