@@ -26,7 +26,7 @@ def configure(
     conflict_checker: ConflictChecker | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     use_verify: bool = False,
-    use_consistency: bool = True,
+    use_consistency: bool = False,
     consistency_n: int = 3,
     use_rag: bool = False,
 ) -> None:

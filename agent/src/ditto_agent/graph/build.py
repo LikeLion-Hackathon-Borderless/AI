@@ -18,7 +18,7 @@ def build_graph(
     conflict_checker: ConflictChecker | None = None,
     checkpointer: BaseCheckpointSaver | None = None,
     use_verify: bool = False,
-    use_consistency: bool = True,
+    use_consistency: bool = False,
     consistency_n: int = 3,
     use_rag: bool = False,
 ):
@@ -28,10 +28,13 @@ def build_graph(
     # 자체는 테스트로 검증된 채 남겨두고, 프롬프트를 더 보수적으로 튜닝한 뒤
     # `build_graph(use_verify=True)`로 재검증하는 걸 다음 단계로 남김.
     #
-    # use_consistency 기본값 True — verify와 반대로 실측이 긍정적이었다(o3-mini 36케이스
-    # 전체 recall=0.857/precision=0.750, 이번 세션 최고 균형 결과). API 요청 수는 그대로라
-    # RPD 부담은 안 늘지만, 응답 하나가 n배 길어져 지연시간은 늘어난다 — 실사용 체감 지연이
-    # 문제되면 use_consistency=False로 언제든 되돌릴 수 있음.
+    # use_consistency 기본값 False(2026-08-17 최종 확정) — golden.json의 고정
+    # few-shot leave-one-out 유출을 다 막고 6회 반복 측정(pooled n=108)한 결과, 진짜
+    # recall/precision 트레이드오프로 확인됨: 끔=recall 0.810/precision 0.761, 켬=recall
+    # 0.746/precision 0.825(survey-results-analysis.md §18). 오해 방지 도구는 놓치는 것(FN)이
+    # 조용히 실패하는 게 과탐지(FP)보다 치명적이라 recall을 우선 — 게다가 켬은 응답을 n배
+    # 생성해야 해서 지연시간도 늘어남. precision을 더 우선해야 하는 사용 사례가 있으면
+    # `use_consistency=True`로 언제든 켤 수 있음(옵션은 그대로 남아있음).
     #
     # use_rag 기본값 False — 36케이스 전체 실측에서 recall/precision이 크게 올라(1.000/0.875)
     # 한때 True로 바꿨으나, golden.json ambiguous 케이스의 76%(13/17)가 RAG로 **자기 자신의

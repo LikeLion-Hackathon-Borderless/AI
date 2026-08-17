@@ -4,8 +4,10 @@ from ditto_agent.eval.cli import (
     _fetch_live_batch,
     _fetch_live_consistency,
     _fetch_live_sequential,
+    _leak_safe_few_shot_ids,
 )
 from ditto_agent.eval.golden import GoldenCase
+from ditto_agent.llm.prompts import FEW_SHOT_ALLOWLIST
 from ditto_agent.schema import AmbiguityItem, ExtractionResult
 
 _AMBIGUOUS_A = AmbiguityItem(span="s", category="TIME", reason="r", candidates=["c"], suggestion="s")
@@ -218,3 +220,25 @@ def test_fetch_live_consistency_aborts_on_rate_limit_but_keeps_partial_results(m
 
     assert aborted
     assert results == {}
+
+
+def test_leak_safe_few_shot_ids_excludes_own_pair_id_from_fixed_allowlist():
+    # 고정 allowlist(T01/T04/F01/F02/D02/D04)에 속한 pair_id를 가진 케이스는 자기 자신을
+    # 제외한 5개만 받아야 함(2026-08-17 실측 — 안 빼면 35% 유출, survey-results-analysis.md
+    # 17-6절).
+    case = GoldenCase(id="T01-ambiguous", draft="d", expected_categories=frozenset(), pair_id="T01")
+    result = _leak_safe_few_shot_ids(client=None, case=case, use_rag=False)
+    assert result == FEW_SHOT_ALLOWLIST - {"T01"}
+    assert "T01" not in result
+
+
+def test_leak_safe_few_shot_ids_unaffected_when_pair_id_not_in_allowlist():
+    case = GoldenCase(id="T02-ambiguous", draft="d", expected_categories=frozenset(), pair_id="T02")
+    result = _leak_safe_few_shot_ids(client=None, case=case, use_rag=False)
+    assert result == FEW_SHOT_ALLOWLIST
+
+
+def test_leak_safe_few_shot_ids_handles_missing_pair_id():
+    case = GoldenCase(id="COMP-01", draft="d", expected_categories=frozenset(), pair_id=None)
+    result = _leak_safe_few_shot_ids(client=None, case=case, use_rag=False)
+    assert result == FEW_SHOT_ALLOWLIST
