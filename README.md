@@ -47,3 +47,8 @@ uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐�
   `agent/README.md`의 "정확도 설정" 절)
 - self-consistency·RAG 동적 few-shot 둘 다 구현·실측했으나 이 규모에서는 기본
   파이프라인보다 낫지 않아 옵션으로만 유지(기본 꺼짐)
+
+## 백엔드 연동
+
+**[`docs/backend-handoff.md`](docs/backend-handoff.md)** — 무엇을 넘기고 무엇을
+직접 구현해야 하는지 체크리스트.
