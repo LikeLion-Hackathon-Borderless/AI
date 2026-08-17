@@ -974,3 +974,69 @@ CLAUDE.md·내부 작업 로그는 dev에 올리지 말라"고 요청 —
 
 전체 커밋 20개 안팎, PR #1(main)·PR #2(dev) 둘 다 반영. `docs/progress.md`/
 `survey-results-analysis.md`는 `feat/agent-scaffold`에만 남고 dev에는 안 올라감(의도한 대로).
+
+## 2026-08-17 (계속) — RAG "기각" 결론 번복 → 채택, 이번 세션 최고 성능 확정
+
+사용자가 "최종 모델(o3-mini)도 방금 RAG 테스트랑 성능 비슷하지 않냐"고 묻다가
+"self-consistency+RAG 같이 켜고 36케이스 전체로도 해보자"로 이어짐 — 결과가
+완전히 뒤집힘.
+
+**o3-mini, 36케이스 전체, 2×2(consistency × RAG)**:
+
+| consistency | RAG | recall | precision |
+|---|---|---|---|
+| 끔 | 끔 | 0.857 | 0.720 |
+| 끔 | 켬 | 1.000 | 0.808 |
+| 켬 | 끔 | 0.857 | 0.750 |
+| **켬** | **켬** | **1.000** | **0.875** |
+
+RAG가 단독으로도, self-consistency와 같이 써도 recall/precision을 끌어올렸고
+**조합이 이번 세션 전체 최고 결과**(FN 0, FP 3). 원인: 아까 "기각"의 근거였던
+20케이스 부분집합엔 **DECISION_STATUS가 아예 없었다** — RAG의 진짜 효과가
+정확히 그 카테고리에서 났던 것.
+
+**코드 반영**: `LLMClient.__init__(use_rag=True)`로 기본값 변경,
+`extract_batch()`/`extract_consistent()`에 `few_shot_ids` 파라미터 추가해
+self-consistency 배치(같은 draft n개 복제)에도 RAG가 실제로 먹히게 배선,
+`eval/cli.py`의 `--rag`+`--consistency` 동시 사용 제한 해제, `build_graph()`/
+`interface.configure()`에 `use_rag: bool = True` 노출. 74개 테스트 통과
+(신규 5개), ruff 클린.
+
+**최종 프로덕션 조합(당시 결론)**: o3-mini + self-consistency(만장일치, n=3) +
+RAG(k=6) + E1(규칙 기반 TIME 필터). 상세: `docs/survey-results-analysis.md` 17-3절.
+
+**교훈(당시 적어둔 것)**: 쉬운 부분집합(DECISION_STATUS 제외)으로 낸 결론이 전체
+골든셋에서 방향까지 뒤집힌 두 번째 사례(첫 번째는 11절 reason-trim).
+
+## 2026-08-17 (계속) — ⚠️ 위 RAG "채택" 결론이 다시 번복됨: 정답 유출이었음
+
+사용자가 "recall 100 나온 게 과적합 아니야?"라고 질문 — 확인해보니 맞았다.
+`golden.json`의 ambiguous 케이스는 `culture_criteria.py` 16개 항목의
+패러프레이즈라, RAG의 `select_few_shot()`이 draft와 제일 비슷한 판단기준표
+항목을 고르면 **거의 항상 자기 자신의 원본 항목이 뽑힌다**. 직접 스크립트로
+검사한 결과 golden set ambiguous 케이스 17개 중 **13개(76%)가 유출**
+(`select_few_shot()` 결과에 그 케이스의 `pair_id`가 포함됨).
+
+즉 방금 전 "RAG+consistency 36케이스 recall=1.000/precision=0.875" 결과는 RAG가
+잘 일반화해서가 아니라 모델이 채점 직전 정답에 해당하는 원본 항목(reason·
+candidates까지 포함)을 few-shot으로 그대로 받아봤기 때문일 가능성이 높음 —
+"채택" 결론의 근거 자체가 무효.
+
+**되돌림**: `LLMClient`/`build_graph()`/`interface.configure()`의 `use_rag`
+기본값을 다시 **False**로. 옵션 자체와 관련 인프라(`few_shot_ids` 파라미터,
+`--rag` 플래그, 캐시 반영)는 코드에 남겨둠 — leave-one-out 같은 유출 없는
+검증 방법을 찾으면 재시도 가능. **최종 프로덕션 조합(확정) = o3-mini +
+self-consistency(만장일치, n=3) + E1(규칙 기반 TIME 필터), RAG 제외.**
+74개 테스트 통과, ruff 클린. 상세: `docs/survey-results-analysis.md` 17-4절.
+
+**교훈**: recall=1.000처럼 "너무 좋은" 숫자는 오히려 의심해야 한다 — 이번
+세션에서 제일 값진 교훈. golden set을 few-shot 후보 풀과 같은 소스에서 만들면
+어떤 동적 few-shot 기법이든 이 유출 위험을 구조적으로 안고 간다.
+
+### Next
+
+- 이 최종 상태(RAG 제외)를 `feat/agent-scaffold-dev`에 반영해서 PR로 다시
+  `dev`에 올릴 것
+- leave-one-out 방식(자기 자신의 원본 판단기준표 항목을 RAG 후보에서 제외)으로
+  RAG를 유출 없이 재검증하는 건 다음 세션 후보
+- 지연시간(self-consistency 켜면 응답이 더 길어짐) 실사용 체감 확인 필요

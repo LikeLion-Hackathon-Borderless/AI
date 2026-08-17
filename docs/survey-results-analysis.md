@@ -722,8 +722,89 @@ DECISION_STATUS를 명시적 문장에도 자꾸 얹음). RAG가 이 경향을 �
 RAG도 못 살렸다"는 가설은 이 결과로 배제됨 — RAG가 이 프롬프트·판단기준표 설계에서
 구조적으로 도움이 안 된다는 결론에 더 확신을 가질 수 있게 됨.
 
-**최종 결론(확정)**: 두 모델(o3, o3-mini) 모두에서 RAG가 precision을 악화시켰다 —
+**최종 결론(확정, 당시)**: 두 모델(o3, o3-mini) 모두에서 RAG가 precision을 악화시켰다 —
 `use_rag=False`(기본 꺼짐) 유지가 맞는 결정. 채택 보류가 아니라 **기각**으로 격상.
+
+### 17-3. ⚠️ 위 "기각" 결론 번복 — 36케이스 전체·self-consistency 조합에서는 최고 성능
+
+17-1/17-2의 "기각" 결론은 **T01~F05 20케이스(DECISION_STATUS 제외)** 만으로 내린
+것이었다. 사용자가 "최종 모델(o3-mini)도 이 정도 성능이면 비슷한 거 아니냐"는
+질문을 하다가, self-consistency+RAG를 같이 켜고 **36케이스 전체**로 재보자는
+쪽으로 이어졌고 — 결과가 완전히 반대로 나왔다.
+
+**o3-mini, 36케이스 전체, 2×2 비교**(consistency × RAG):
+
+| consistency | RAG | recall | precision | TP | FP | FN | report |
+|---|---|---|---|---|---|---|---|
+| 끔 | 끔 | 0.857 | 0.720 | 18 | 7 | 3 | `20260817T062904Z` |
+| 끔 | **켬** | **1.000** | **0.808** | 21 | 5 | 0 | `20260817T062057Z` |
+| 켬 | 끔 | 0.857 | 0.750 | 18 | 6 | 3 | `20260817T043723Z` |
+| **켬** | **켬** | **1.000** | **0.875** | 21 | 3 | 0 | `20260817T063910Z` |
+
+**RAG 단독으로도, self-consistency와 같이 써도 recall·precision이 둘 다 올랐다** —
+FN이 완전히 0으로 떨어지고 FP도 계속 줄어드는 깨끗하게 단조적인 개선. **RAG+
+consistency 조합이 이번 세션 전체를 통틀어 최고 결과(1.000/0.875)**.
+
+**왜 17-1/17-2 결론이 틀렸었나**: 20케이스 부분집합엔 **DECISION_STATUS가 아예
+없었다.** RAG의 진짜 효과가 정확히 이 카테고리(이번 세션 내내 제일 어려웠던
+카테고리)에서 나타났던 것으로 보인다 — recall이 0.857→1.000으로 오른 게 이걸
+뒷받침(FN 3건이 전부 사라짐). 쉬운 부분집합만 보고 "효과 없음"이라 단정한 게
+성급했다 — verify-loop처럼 "제대로 된 실측 없이는 기본값을 켜지 않는다"는
+원칙은 지켰지만, 이번엔 **부분집합이 대표성이 없었다**는 게 원인이었다.
+
+**최종 결론(재확정, 당시)**: RAG **채택**. `LLMClient(use_rag=True)`가 기본값,
+`build_graph()`/`interface.configure()`에도 `use_rag: bool = True`로 노출.
+최종 프로덕션 조합 = o3-mini + self-consistency(만장일치, n=3) + RAG(k=6) +
+E1(규칙 기반 TIME 필터).
+
+**교훈(그때는 이렇게 적었으나 — §17-4 참고)**: 부분집합으로 낸 결론은 그 부분집합의
+대표성만큼만 믿을 수 있다 — "쉬운 부분집합 결과"와 "전체 골든셋 결과"가 방향까지
+반대로 나온 사례가 이걸로 두 번째다(E0 reason-trim 때도 비슷한 패턴, 11절).
+
+### 17-4. ⚠️ 다시 번복 — 채택 자체가 정답 유출 때문이었음이 드러남 (최종: 기각)
+
+사용자가 정확한 질문을 던졌다: **"recall이 100 나온 게 과적합 아니야?"**
+
+확인해보니 그 말이 맞았다. `golden.json`의 ambiguous 케이스는 `culture_criteria.py`
+16개 항목의 패러프레이즈로 만들어졌는데, RAG의 `select_few_shot()`은 draft와
+코사인 유사도가 가장 높은 판단기준표 항목을 few-shot으로 골라온다 — **골든셋
+자체가 few-shot 후보 풀의 패러프레이즈니까, 거의 항상 자기 자신의 원본 항목이
+뽑힌다.**
+
+직접 스크립트로 확인(`select_few_shot()`을 golden.json의 ambiguous 케이스 17개에
+실행, 각 케이스의 `pair_id`가 뽑힌 few-shot id 목록에 있는지 검사):
+
+```
+T01-ambiguous: pair_id=T01 selected=[D01, F01, F03, T01, T02, T05] LEAK=True
+T03-ambiguous: pair_id=T03 selected=[D05, T01, T02, T03, T04, T05]  LEAK=True
+F04-ambiguous: pair_id=F04 selected=[D02, F01, F03, F04, F05, F06]  LEAK=True
+...(총 17개 중 13개, 76%가 LEAK=True)
+```
+
+즉 §17-3의 "RAG+consistency 36케이스 recall=1.000/precision=0.875"는 RAG가
+진짜 잘 일반화해서가 아니라, **모델이 채점 직전에 정답에 해당하는 원본 판단기준표
+항목(같은 category/reason/candidates까지 포함)을 few-shot으로 그대로 받아봤기
+때문일 가능성이 높다.** 이건 일반화 능력 측정이 아니라 사실상 답안 유출 측정 —
+17-3에서 "채택"이라고 결론 내린 근거 자체가 무효.
+
+**조치**: `LLMClient.__init__`/`build_graph()`/`interface.configure()`의 `use_rag`
+기본값을 **다시 False로 되돌림**. `use_rag=True` 옵션 자체와 관련 인프라
+(`extract_batch()`/`extract_consistent()`의 `few_shot_ids` 파라미터, `--rag`
+CLI 플래그, cache.py 반영)는 코드에 남겨둠 — 나중에 유출 없는 방법(예: 코사인
+후보에서 자기 자신의 원본 `pair_id`에 해당하는 항목을 제외하는 leave-one-out
+방식)으로 재검증할 수 있게.
+
+**최종 결론(확정)**: RAG **기각**. 최종 프로덕션 조합 = **o3-mini +
+self-consistency(만장일치, n=3) + E1(규칙 기반 TIME 필터)** — RAG는 제외.
+
+**교훈**: 
+1. **recall=1.000처럼 "너무 좋은" 숫자는 오히려 의심해야 한다** — 이번 세션에서
+   가장 값진 교훈. 사용자의 "이거 과적합 아니야?" 한 마디가 몇 시간 동안 쌓아온
+   "채택" 결론을 뒤집었다.
+2. golden set을 few-shot 후보 풀과 **같은 소스**(`culture_criteria.py`)에서
+   만들면, few-shot을 동적으로 고르는 어떤 기법(RAG 등)이든 이 유출 위험을
+   구조적으로 안고 간다 — 애초에 골든셋과 few-shot 풀을 분리했어야 더 안전했다.
+   다음에 골든셋을 확장할 땐 이 점을 반영할 것.
 
 ## Next
 
