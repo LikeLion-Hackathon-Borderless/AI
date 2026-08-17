@@ -27,10 +27,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--verify",
         action="store_true",
-        help="extract() 뒤에 verify() 2차 필터링을 체이닝 — 기본은 생략(꺼짐). 2026-08-17"
-        " gpt-5-mini 실측(docs/survey-results-analysis.md 10절)에서 verify가 precision을"
-        " 오히려 악화시키는 게 확인돼(0.679→0.500) build_graph()의 프로덕션 기본값도 꺼짐으로"
-        " 바뀜 — 이 플래그로 켜서 재측정/재튜닝할 때 씀.",
+        help="extract() 뒤에 verify() 2차 필터링을 체이닝 — 기본은 생략(꺼짐). gpt-5-mini"
+        " 실측에서 verify가 precision을 오히려 악화시키는 게 확인돼(0.679→0.500) build_graph()"
+        "의 프로덕션 기본값도 꺼짐으로 바뀜 — 이 플래그로 켜서 재측정/재튜닝할 때 씀.",
     )
     parser.add_argument(
         "--batch",

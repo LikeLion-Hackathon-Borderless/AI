@@ -18,12 +18,13 @@ def extract_node(state: GraphState) -> dict:
 
 def make_extract_node(use_consistency: bool = False, n: int = 3, use_rag: bool = False):
     # use_consistency=True면 단발 extract() 대신 extract_consistent()(n회 독립 추출 후
-    # 카테고리 만장일치 채택)를 쓴다 — 2026-08-17 o3-mini 36케이스 전체 실측(recall=0.857,
-    # precision=0.750, 이번 세션 최고 균형 결과, docs/survey-results-analysis.md 13-1/16절)
-    # 으로 verify-loop과 달리 채택하기로 함. API 요청 수는 여전히 1번(배치 크기가 n일 뿐)이라
-    # RPD 부담은 그대로지만, 한 번의 응답이 n배 더 길어져 지연시간은 늘어난다는 점은 감안할 것.
+    # 카테고리 만장일치 채택)를 쓴다 — API 요청 수는 여전히 1번(배치 크기가 n일 뿐)이라
+    # RPD 부담은 그대로지만, 한 번의 응답이 n배 더 길어져 지연시간은 늘어난다. 반복 측정
+    # 결과 precision은 오르지만 recall이 떨어지는 트레이드오프가 확인됐고, 오해 방지
+    # 도구 특성상 recall을 우선해 기본값은 False로 확정(자세한 근거는 `graph/build.py`
+    # 참고).
     # use_rag 기본 False — golden.json ambiguous 케이스의 76%가 RAG로 자기 자신의 원본
-    # 판단기준표 항목을 few-shot으로 받아오는 유출 문제가 확인돼(17-4절) 채택을 되돌림.
+    # 판단기준표 항목을 few-shot으로 받아오는 유출 문제가 확인돼 채택을 되돌림.
     def node(state: GraphState) -> dict:
         context = DraftContext.model_validate(state["context"])
         client = LLMClient(use_rag=use_rag)

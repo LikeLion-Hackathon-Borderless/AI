@@ -1,5 +1,6 @@
-# 구조화된 형태의 docs/문화_판단기준표_초안.md — 손으로 동기화 유지, verified=False는
-# 아직 인터뷰 검증 전이라는 뜻(검증 계획은 그 문서 참고).
+# 구조화된 형태의 docs/culture-criteria.md — 손으로 동기화 유지. verified=False는
+# 이번 스코프에서 구현 제외된 OTHER(C01-04) 항목이라는 뜻(문서의 "excluded from
+# implementation" 부록 참고), verified=True는 설문·인터뷰로 1차 검증된 16개(T/F/D).
 from typing import Literal, TypedDict
 
 Category = Literal["TIME", "REQUEST_INTENT", "DECISION_STATUS", "OTHER"]
