@@ -149,9 +149,14 @@ def _vote_extraction(results: list[ExtractionResult], threshold: int) -> Extract
 
 class LLMClient:
     def __init__(self, use_rag: bool = False) -> None:
-        # use_rag: RAG 동적 few-shot 선택(llm/retrieval.py)을 쓸지 — 기본 꺼짐. verify-loop과
-        # 달리 아직 실측으로 검증되지 않은 기능이라 opt-in으로 시작(2026-08-17,
-        # docs/survey-results-analysis.md 16절 Next 참고).
+        # use_rag 기본값 False — 36케이스 전체에서 recall/precision이 크게 오르는 걸 보고
+        # (1.000/0.875) 한때 True로 바꿨었으나, golden.json의 ambiguous 케이스 17개 중
+        # 13개(76%)가 RAG로 **자기 자신의 원본 판단기준표 항목을 few-shot으로 그대로
+        # 받아오는** 것으로 확인됨(select_few_shot()이 draft와 가장 유사한 phrase를 고르는데,
+        # golden set 자체가 culture_criteria.py 항목의 패러프레이즈라 거의 항상 원본이
+        # 뽑힘) — 이건 일반화가 아니라 정답 유출에 가까워서 측정치를 못 믿는다. 다시 False로
+        # 되돌림(2026-08-17, docs/survey-results-analysis.md 17-4절). 리키지 없이 재검증할
+        # 방법(leave-one-out 등)을 찾기 전까진 이 상태 유지.
         self.use_rag = use_rag
         # 기본값은 "mock"이 아니라 "live" — DITTO_LLM_MODE를 아예 안 정해둔 배포는 조용히
         # 가짜 응답만 내보내는 것보다 키가 없어 바로 죽는 게 훨씬 안전하다(silent failure 방지).
@@ -261,10 +266,17 @@ class LLMClient:
         results.update({item.index: item.ambiguities for item in parsed.items})
         return results
 
-    def extract_batch(self, items: list[tuple[str, DraftContext]]) -> dict[int, ExtractionResult]:
+    def extract_batch(
+        self, items: list[tuple[str, DraftContext]], few_shot_ids: set[str] | None = None
+    ) -> dict[int, ExtractionResult]:
         # 골든셋 평가처럼 서로 무관한 메시지 다수를 한 번에 처리할 때 씀 — 요청 수(RPD) 자체가
         # 쿼터인 계정에서는 메시지당 호출 1개보다 이게 훨씬 아낀다. 실사용 흐름(interface.start())은
         # 항상 메시지 1개라 이 메서드를 안 씀 — 배치는 eval 전용.
+        # few_shot_ids: 배치 안 항목들이 서로 다른 draft면(일반 eval batch) 하나의 공유
+        # system prompt에 draft별 few-shot을 못 반영하지만, extract_consistent()처럼 배치 전체가
+        # "같은 draft를 n번 복제"한 경우엔 few_shot_ids 하나만 계산해서 그대로 넘기면 된다 —
+        # 호출부가 그 특수 케이스인지 판단해서 넘겨줌(이 메서드는 그냥 있으면 쓰고 없으면
+        # 기본 allowlist).
         drafts_by_index = {i: draft for i, (draft, _) in enumerate(items)}
 
         if self.mode == "mock":
@@ -282,7 +294,7 @@ class LLMClient:
         completion = self._client.chat.completions.parse(
             model=self.model,
             messages=[
-                {"role": "system", "content": build_system_prompt(batch=True)},
+                {"role": "system", "content": build_system_prompt(batch=True, few_shot_ids=few_shot_ids)},
                 {"role": "user", "content": build_batch_user_prompt(entries)},
             ],
             response_format=BatchExtractionResult,
@@ -303,7 +315,12 @@ class LLMClient:
         }
 
     def extract_consistent(
-        self, draft: str, context: DraftContext, n: int = 3, threshold: int | None = None
+        self,
+        draft: str,
+        context: DraftContext,
+        n: int = 3,
+        threshold: int | None = None,
+        few_shot_ids: set[str] | None = None,
     ) -> ExtractionResult:
         # seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 사라진다는 걸 실측으로
         # 확인함(survey-results-analysis.md 13절) — 같은 메시지를 n번 독립 추출해 카테고리
@@ -313,8 +330,12 @@ class LLMClient:
         # threshold 기본값은 과반(n//2+1)이 아니라 **만장일치(n)** — 2026-08-17 실측(13-1절)에서
         # 과반은 오히려 precision을 깎아먹었고(0.714) 만장일치로 올리니 recall/precision 둘 다
         # 만점이 나왔다. 더 관대한 기준을 원하면 호출부에서 threshold를 명시적으로 낮추면 됨.
+        # few_shot_ids: extract()와 같은 패턴 — 명시적으로 넘기면 그대로 쓰고, 안 넘겼는데
+        # self.use_rag면 여기서 한 번만 계산(n개 항목이 전부 같은 draft라 한 번으로 충분).
         threshold = threshold if threshold is not None else n
-        runs = self.extract_batch([(draft, context)] * n)
+        if few_shot_ids is None and self.use_rag:
+            few_shot_ids = select_few_shot(self.embed, draft, k=6, fallback=FEW_SHOT_ALLOWLIST)
+        runs = self.extract_batch([(draft, context)] * n, few_shot_ids=few_shot_ids)
         results = [runs[i] for i in range(n)]
         return _vote_extraction(results, threshold)
 

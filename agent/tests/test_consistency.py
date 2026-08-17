@@ -71,9 +71,9 @@ def test_mock_extract_consistent_calls_extract_batch_n_times(monkeypatch):
     calls = []
     original = client.extract_batch
 
-    def spy(items):
+    def spy(items, few_shot_ids=None):
         calls.append(len(items))
-        return original(items)
+        return original(items, few_shot_ids=few_shot_ids)
 
     monkeypatch.setattr(client, "extract_batch", spy)
     client.extract_consistent("내일까지 부탁드려요", DraftContext(now_iso="2026-08-14T18:44:00+09:00"), n=3)
@@ -98,6 +98,23 @@ def test_graph_default_uses_consistency_and_still_reaches_two_interrupts(monkeyp
 def test_graph_use_consistency_false_matches_plain_extract(monkeypatch):
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
     graph = build_graph(use_consistency=False)
+    config = {"configurable": {"thread_id": str(uuid.uuid4())}}
+    draft = "내일까지 조금 더 고민해 보면 좋을 것 같아요"
+    context = DraftContext(now_iso="2026-08-14T18:44:00+09:00")
+
+    graph.invoke({"draft": draft, "context": context.model_dump()}, config=config)
+    snapshot = graph.get_state(config)
+    assert snapshot.interrupts
+    assert snapshot.values["extraction"]["ambiguities"]
+
+
+def test_graph_use_rag_true_still_reaches_two_interrupts(monkeypatch):
+    # use_rag 기본값은 False로 유지 중(golden set 76%가 RAG로 자기 자신의 원본 판단기준표
+    # 항목을 few-shot으로 그대로 받아오는 유출 문제 발견, 17-4절) — 그래도 옵션 자체는
+    # 남겨뒀으니(use_rag=True로 명시) mock 모드 end-to-end happy path가 깨지지 않는지 확인.
+    # mock extract()는 RAG 로직 진입 전에 조기 반환하므로 영향 없어야 함.
+    monkeypatch.setenv("DITTO_LLM_MODE", "mock")
+    graph = build_graph(use_rag=True)
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}
     draft = "내일까지 조금 더 고민해 보면 좋을 것 같아요"
     context = DraftContext(now_iso="2026-08-14T18:44:00+09:00")
