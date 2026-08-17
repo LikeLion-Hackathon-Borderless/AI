@@ -40,11 +40,14 @@ uv run ditto-eval --limit 3            # 앞 3개만 — 빠른 확인용
 uv run ditto-eval --only T01           # id에 "T01"이 포함된 케이스만
 uv run ditto-eval --no-cache           # live 모드 캐시 무시하고 매번 새로 호출
 uv run ditto-eval --batch-size 20      # 호출 한 번에 20케이스씩 묶기 — 요청 수 자체를 줄임
+uv run ditto-eval --consistency 3      # self-consistency(만장일치) 실측용, 기본 파이프라인은 꺼져 있음
+uv run ditto-eval --rag                # RAG 동적 few-shot 실측용, 기본 파이프라인은 꺼져 있음
 ```
 
-**live 모드는 계정 요청 한도(RPD)에 걸리기 쉽다** — 실제로 gpt-5/gpt-4o-mini 둘 다 하루
-50회 한도인 계정에서 40개짜리 골든셋 한 번 돌리다 소진된 적이 있다(모델 바꿔도 한도가
-따로 안 늘어남 — 계정 자체가 모델별로 각 50/day인 것으로 보임). 그래서:
+**live 모드는 계정 요청 한도(RPD/RPM)에 걸리기 쉽다** — 결제 수단이 없는 계정은
+모델마다 한도가 따로 있고 종류도 다르다(대부분 RPD 50/day, o3-mini는 150/day,
+gpt-4.1류는 RPD 대신 RPM 3/min). 36개짜리 골든셋 한 번 돌리다 소진된 적이 여러
+번 있어서:
 - **케이스 여러 개를 호출 하나로 묶어 보낸다**(`LLMClient.extract_batch`, 기본
   `--batch-size 10` — 40개면 4콜) — RPD 자체가 쿼터인 계정에서는 이게 가장 직접적인
   절감. 배치 응답에서 누락된 index가 있으면(모델이 항목을 빠뜨림) 그 케이스만 개별
@@ -167,20 +170,64 @@ ConflictResult` — `agent/src/ditto_agent/graph/conflict.py`의 `default_confli
 참조 구현. 이 체크포인터 DB는 **그래프 재개 상태 전용**이며, 메시지/합의 기록 같은
 도메인 데이터는 별도 DB(다른 팀원 쪽)에 저장한다 — 섞지 말 것.
 
+`configure()`는 실측으로 검증된 정확도 옵션도 받는다 — 기본값을 그대로 두면 되고,
+바꿀 일은 거의 없을 것:
+
+```python
+configure(
+    conflict_checker=real_conflict_checker,
+    checkpointer=checkpointer,
+    use_verify=False,        # 기본값 — 2차 검수 호출, 실측상 precision 악화라 꺼둠
+    use_consistency=False,   # 기본값 — 켜면 메시지당 응답을 3배 생성해 정밀도는 오르지만
+                              # 지연시간도 늘고 recall이 떨어짐(아래 "정확도 설정" 참고)
+    use_rag=False,           # 기본값 — 골든셋 규모(16개 판단기준)에서는 오히려 정확도 악화 확인
+)
+```
+
+## 정확도 설정 — 왜 다 기본값 그대로 두는 게 맞는지
+
+세 옵션(`use_verify`/`use_consistency`/`use_rag`) 전부 **실측으로 검증**하고
+기본 꺼짐으로 확정했다 — 상세 수치는 `docs/survey-results-analysis.md` 참고,
+결론만 요약:
+
+- **recall을 precision보다 우선**했다 — 오해 방지 도구는 모호성을 놓치는 것(FN)이
+  조용히 실패해서 나중에 진짜 오해로 이어지지만, 과탐지(FP)는 확인 한 번 더
+  누르는 정도라 훨씬 덜 치명적이다.
+- `use_consistency=True`(self-consistency 다수결)를 켜면 precision이 오르지만
+  (0.761→0.825) recall이 떨어진다(0.810→0.746) — 36케이스를 조건당 3회씩 반복
+  측정(pooled n=108)해서 노이즈가 아니라 진짜 트레이드오프임을 확인한 뒤 내린
+  결정. 게다가 켜면 메시지당 응답을 3배 생성해야 해서 지연시간도 늘어난다 —
+  꺼두는 쪽이 정확도·속도 둘 다 이득.
+- `use_rag=True`(판단기준표를 draft 유사도로 동적 선택)는 처음엔 최고 결과처럼
+  보였으나(recall 1.000/precision 0.875), golden set이 판단기준표 항목의
+  패러프레이즈라 **자기 자신이 정답으로 그대로 유출**되는 방법론 버그였음을
+  발견 — leave-one-out으로 유출을 막고 재측정하니 모든 조합에서 오히려 baseline
+  보다 나빴다. 후보 풀(16개)이 작아서 "draft와 비슷한 것"과 "카테고리를 골고루
+  커버하는 것"이 충돌하는 게 원인으로 확인됨(고정 few-shot은 항상
+  TIME/REQUEST_INTENT/DECISION_STATUS 2-2-2 균형을 유지하지만 RAG는 자주 한
+  카테고리를 0개로 만든다).
+- 만약 precision을 더 우선해야 하는 사용 사례가 생기면(예: 오탐 때문에 사용자
+  불만이 많다는 QA 피드백) `use_consistency=True`만 켜보는 걸 권장 — 지연시간
+  3배 증가를 감수할 가치가 있는지 먼저 확인할 것.
+
 ## 환경 변수
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `DITTO_LLM_MODE` | **`live`** (코드 기본값) | `mock`이면 키 없이 고정 응답, `live`면 실제 OpenAI 호출. `.env.example`은 로컬 개발용으로 `mock`을 명시해둠 — 이 변수 자체를 안 정하면(예: 배포 환경 설정 누락) `live`로 시도하다 `OPENAI_API_KEY` 없으면 바로 에러 — 조용히 mock으로 새는 것 방지 |
 | `OPENAI_API_KEY` | (없음) | `live` 모드에서 필수 |
-| `DITTO_OPENAI_MODEL` | `gpt-4o-mini` | 구조화 출력을 지원하는 모델로 교체 가능. `gpt-5`는 계정별 RPD 한도가 매우 낮을 수 있음(실측 50/day) — 데모 등 품질이 중요한 순간에만 임시로 바꿔 쓰기 |
+| `DITTO_OPENAI_MODEL` | `o3-mini` | 구조화 출력을 지원하는 모델로 교체 가능. 결제 수단이 없는 계정은 모델별로 무료 티어 한도가 서로 다르다(RPD 50/day가 대부분이지만 o3-mini는 150/day, gpt-4.1류는 RPD 대신 RPM 3/min이 병목) — 계정에 결제 수단을 등록하면 전체 한도가 올라간다 |
 | `DITTO_CHECKPOINT_DB` | `./ditto_checkpoints.db` | `SqliteSaver` 배선 시 사용할 경로 |
 
 ## 아직 안 채운 부분
 
-- `docs/문화_판단기준표_초안.md` 20개 항목은 전부 미검증(☐) 가설 — `docs/
-  research-tfd-validation.md`가 문헌 기반 1차 검증 결과 정리(F축 가장 탄탄, D축
-  가장 약함). 실제 인터뷰/설문 검증은 아직 안 됨.
+- `docs/문화_판단기준표_초안.md` 16개 항목(OTHER 제외)은 설문(n=12~15)·인터뷰
+  1차 검증은 됐지만, 실사용 트래픽 기반 검증은 아직 없음 — `docs/
+  survey-results-analysis.md`가 상세 근거.
+- 골든셋(`agent/data/golden.json`)이 36케이스로 표본이 작아 recall/precision
+  절대값에 노이즈가 크다(같은 설정으로 반복 측정해도 ±0.05~0.1 흔들림 확인됨) —
+  **QA 기간 동안 골든셋을 확장**해서(few-shot 풀과 안 겹치는 새 문장으로, 정답
+  유출 방지) 더 큰 표본으로 재검증할 계획.
 - `graph/conflict.py`의 `default_conflict_checker`는 진짜 근무시간표/공휴일을 모른다
   — 프로덕션에서는 반드시 `configure(conflict_checker=...)`로 교체.
 - `translate_card_node`는 카드 필드만 번역 — 채팅 스레드의 개별 메시지 번역은 스코프
