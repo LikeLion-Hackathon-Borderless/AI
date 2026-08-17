@@ -942,8 +942,35 @@ o3 자체가 과탐지 경향이 강한 모델(RAG 없이도 precision 0.500)이
 
 ### Next
 
-- (선택) precision이 이미 준수한 모델(o3-mini 등)에서도 RAG on/off를 직접
-  비교해보면 "과탐지 경향 강한 모델에서만 나쁜가" 검증 가능 — RPD 여유 있을 때
 - E0~E3 전체 정리: 최종 프로덕션 설정 = **o3-mini + E2(만장일치 self-consistency)
   + E1(규칙 기반 TIME 필터) + RAG 꺼짐**
 - 오늘 세션 마무리 시점 — 커밋/푸시 상태 최종 확인 필요
+
+## 2026-08-17 (계속) — 프로덕션 모델(o3-mini)로 RAG 재확인 → 기각 확정 + dev 브랜치 첫 머지
+
+사용자가 "o3는 baseline이 원래 안 좋아서 RAG가 못 살린 거 아니냐"고 타당한 의심 제기
+— o3-mini(baseline이 훨씬 좋음, RPD 149/150 여유)로 같은 20케이스 재확인:
+
+| 조건 | recall | precision |
+|---|---|---|
+| RAG 끔 | 1.000 | 0.909 |
+| RAG 켬 | 1.000 | 0.833 |
+
+o3-mini도 같은 방향(precision 저하) — **baseline이 좋든 나쁘든 RAG가 일관되게
+정밀도를 깎음**을 확인, RAG를 "보류"가 아니라 **기각**으로 격상. 상세:
+`docs/survey-results-analysis.md` 17-2절.
+
+**dev 브랜치 워크플로 신설**: 사용자가 "dev 브랜치 만들어서 PR로 코드리뷰 후 머지,
+CLAUDE.md·내부 작업 로그는 dev에 올리지 말라"고 요청 —
+1. `dev` 브랜치를 `origin/main`에서 새로 생성
+2. `feat/agent-scaffold`에서 CLAUDE.md·`docs/`의 진행 로그/설문 분석/ADR/인터뷰
+   문서를 뺀 **별도 브랜치 `feat/agent-scaffold-dev`** 생성(`docs/문화_판단기준표_초안.md`만
+   유지) — 처음엔 실수로 `feat/agent-scaffold` 본체에서 직접 삭제했다가, 그러면
+   PR #1(→main)에도 영향을 주고 향후 세션이 참고할 로그도 사라진다는 걸 깨닫고
+   즉시 `git revert`로 복구 후 별도 브랜치로 다시 함
+3. PR #2(`feat/agent-scaffold-dev` → `dev`) 오픈, 코드 리뷰 진행(RAG의 `use_rag`가
+   `extract_batch()`/프로덕션 그래프에는 전혀 안 먹힌다는 설계 공백 등 발견,
+   차단 사유는 없음 확인) → 머지 완료
+
+전체 커밋 20개 안팎, PR #1(main)·PR #2(dev) 둘 다 반영. `docs/progress.md`/
+`survey-results-analysis.md`는 `feat/agent-scaffold`에만 남고 dev에는 안 올라감(의도한 대로).
