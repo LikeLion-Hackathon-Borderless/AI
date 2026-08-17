@@ -9,31 +9,20 @@
 ## 아키텍처
 
 ```mermaid
-flowchart LR
-    subgraph 외부["외부 (다른 팀원 담당)"]
-        U[발신자] -->|메시지 작성| BE[백엔드 FastAPI]
-        R[수신자]
-    end
-
-    subgraph agent["ditto_agent — 이 패키지"]
-        direction TB
-        EX["extract\n(모호성 추출)"] --> CA{모호성 있음?}
-        CA -->|있음| INT["confirm_ambiguities\ninterrupt()로 대기"]
-        CA -->|없음| CC[conflict_check]
-        INT -->|발신자가 순서대로 확정| INT
-        INT -->|전부 확정됨| CC
-        CC["conflict_check\n(근무시간 충돌)"] --> BC[build_card]
-        BC --> TR["translate_card\n(receiver_lang 설정 시만)"]
-    end
+flowchart TB
+    IN(["start(draft, context)"]) --> EX["extract\n(모호성 추출)"]
+    EX --> CA{모호성 있음?}
+    CA -->|있음| INT["confirm_ambiguities\ninterrupt()로 대기"]
+    CA -->|없음| CC[conflict_check]
+    INT -->|"resume(thread_id, answer)\n순서대로 확정"| INT
+    INT -->|전부 확정됨| CC
+    CC["conflict_check\n(근무시간 충돌)"] --> BC[build_card]
+    BC --> TR["translate_card\n(receiver_lang 설정 시만)"]
+    TR --> OUT(["StartResult(status=done, card)"])
+    INT -.->|모호성 남아있는 동안| OUT2(["StartResult(status=interrupt)"])
 
     LLM[(OpenAI\n구조화 출력)]
-
-    BE -->|"start(draft, context)"| EX
     EX -.->|extract 호출| LLM
-    INT -->|"StartResult(status=interrupt)"| BE
-    BE -->|"resume(thread_id, answer)"| INT
-    TR -->|"StartResult(status=done, card)"| BE
-    BE -->|카드 전달| R
 ```
 
 메시지 하나가 `extract`에서 시작해 모호성 개수만큼(보통 0~2개) `confirm_ambiguities`에서
