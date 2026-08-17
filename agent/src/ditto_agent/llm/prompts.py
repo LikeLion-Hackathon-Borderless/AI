@@ -50,9 +50,12 @@ candidates, suggestion}}).
   DECISION_STATUS 카테고리로 ambiguities에 추가해 확인받으세요."""
 
 
-def build_system_prompt(batch: bool = False) -> str:
+def build_system_prompt(batch: bool = False, few_shot_ids: set[str] | None = None) -> str:
+    # few_shot_ids가 주어지면(RAG 동적 선택, llm/retrieval.py 참고) 고정 allowlist 대신 그
+    # id들로 few-shot을 구성한다 — 생략하면 지금까지처럼 고정 6개(_FEW_SHOT_ALLOWLIST)를 씀.
+    examples = as_few_shot_examples(ids=few_shot_ids) if few_shot_ids is not None else FEW_SHOT_EXAMPLES
     positive = "\n\n".join(
-        f"예시 입력: {ex['input']}\n예시 모호성: {ex['ambiguity']}" for ex in FEW_SHOT_EXAMPLES
+        f"예시 입력: {ex['input']}\n예시 모호성: {ex['ambiguity']}" for ex in examples
     )
     negative = "\n\n".join(
         f"예시 입력: {text}\n예시 결과: ambiguities: [] (모호성 없음 — 경고를 만들어내지 않음)"

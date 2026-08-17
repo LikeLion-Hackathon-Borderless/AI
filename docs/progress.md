@@ -811,7 +811,42 @@ precision=1.000**(20/20 전부 정답). threshold=2(과반, precision 0.714)보�
 - **내일 최우선**: gpt-4o-mini로 threshold=3(만장일치) 20케이스 재확인 — o3-mini
   결과가 모델 무관하게 재현되는지
 - 36케이스 전체(DECISION_STATUS 포함)로도 self-consistency 만장일치 효과 검증
-- E3(RAG 동적 few-shot) 착수
 - E2가 최종 확인되면 `graph/build.py`/`interface.configure()`에 `use_consistency`
   같은 옵션으로 노출할지 결정(verify-loop 패턴과 다르게, 이번엔 실측이 긍정적이라
   채택 방향)
+
+## 2026-08-17 (계속) — E3(RAG) 핵심 로직 구현·테스트, 프로덕션 연결은 보류
+
+당일 마감이라 gpt-4o-mini 요청이 2개밖에 안 남은 상태에서 무리하게 실측까지
+하기보다, **API 호출이 필요 없는 부분(코드+유닛테스트)만 오늘 끝내는** 쪽으로
+범위를 좁힘.
+
+- `llm/retrieval.py` 신설: `embed_criteria(embed_fn, cache_path)` — 판단기준표
+  16개 phrase를 임베딩해 `.criteria_embeddings.json`에 캐시(깨진 캐시는 무시하고
+  재생성), `select_few_shot(embed_fn, draft, k, fallback)` — draft와 코사인
+  유사도가 가장 높은 phrase id k개 선택, **임베딩 실패 시 고정 allowlist로 폴백**
+  (RAG가 실패해도 파이프라인이 안 죽게).
+- `LLMClient.embed(text)` 신설 — live는 `text-embedding-3-small`, mock은 텍스트
+  해시 기반 가짜 벡터(같은 입력엔 항상 같은 값이라 코사인 로직 자체는 mock으로도
+  테스트 가능).
+- `build_system_prompt(batch, few_shot_ids)` — `few_shot_ids`가 주어지면 고정
+  allowlist 대신 그 id들로 few-shot 구성(생략 시 기존 동작 그대로, 하위 호환).
+- 테스트 13개 신설(`test_retrieval.py` 7개, `test_prompts.py` 3개,
+  `test_verify_node.py`에 `embed()` mock 결정성 2개) — 전체 53→66개 통과, ruff
+  클린. `.gitignore`에 `.criteria_embeddings.json` 추가.
+
+**의도적으로 안 한 것**: `extract()`/`extract_batch()`에 RAG를 실제로 연결하는
+배선, `eval/cli.py`의 `--rag` 플래그, `eval/cache.py`의 캐시 키에 선택된
+few_shot_ids 반영(안 하면 draft마다 다른 few-shot을 썼는데도 캐시가 이걸 못
+감지하는, 이번 세션에 두 번 겪은 것과 같은 종류의 stale-cache 버그가 또 날 수
+있음) — 이 세 가지는 실측 검증 없이 서두르면 위험도가 크다고 판단해 다음
+세션으로 미룸. 지금 상태는 "RAG 부품은 만들어져 있고 테스트도 통과하지만
+프로덕션에는 아직 안 꽂혀 있음".
+
+### Next
+
+- E3를 실제로 연결: `extract()`/`extract_batch()`가 `select_few_shot()` 결과를
+  `build_system_prompt(few_shot_ids=...)`에 넘기게 배선, `eval/cache.py` 캐시
+  키에 선택된 few_shot_ids 반영(같은 stale-cache 버그 재발 방지), `eval/cli.py`에
+  `--rag` 플래그 추가 후 실측
+- 위 세 가지 완료 후에만 E3 실측(RPD 여유 있는 모델로) 진행

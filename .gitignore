@@ -24,6 +24,7 @@ dist/
 
 outputs/
 .eval_cache/
+.criteria_embeddings.json
 checkpoints/
 wandb/
 *.ckpt

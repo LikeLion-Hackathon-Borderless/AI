@@ -42,3 +42,15 @@ def test_graph_still_reaches_two_interrupts_with_verify_node_inserted(monkeypatc
     snapshot = graph.get_state(config)
     assert snapshot.interrupts
     assert snapshot.values["extraction"]["ambiguities"]  # verify_ambiguities_node가 채워둔 상태
+
+
+def test_mock_embed_is_deterministic_for_same_text(monkeypatch):
+    monkeypatch.setenv("DITTO_LLM_MODE", "mock")
+    client = LLMClient()
+    assert client.embed("같은 텍스트") == client.embed("같은 텍스트")
+
+
+def test_mock_embed_differs_for_different_text(monkeypatch):
+    monkeypatch.setenv("DITTO_LLM_MODE", "mock")
+    client = LLMClient()
+    assert client.embed("텍스트 A") != client.embed("텍스트 B")

@@ -1,3 +1,4 @@
+import hashlib
 import os
 from collections import Counter
 from datetime import datetime, timedelta
@@ -85,6 +86,7 @@ def _mock_extract(draft: str, context: DraftContext) -> ExtractionResult:
 # (seed는 더 폭넓게 지원됨 — gpt-4o-mini에서 직접 확인).
 _SAMPLING_SEED = 42
 _REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+_EMBEDDING_MODEL = "text-embedding-3-small"  # llm/retrieval.py의 RAG 동적 few-shot용 — chat completions RPD와 별도 풀
 
 
 def _sampling_kwargs(model: str) -> dict:
@@ -295,6 +297,17 @@ class LLMClient:
         runs = self.extract_batch([(draft, context)] * n)
         results = [runs[i] for i in range(n)]
         return _vote_extraction(results, threshold)
+
+    def embed(self, text: str) -> list[float]:
+        # llm/retrieval.py의 RAG 동적 few-shot 선택에 씀 — mock 모드는 실제 벡터 대신 텍스트
+        # 해시로 만든 가짜 벡터를 반환한다(같은 입력엔 항상 같은 값이라 코사인 유사도 로직
+        # 자체는 mock으로도 테스트 가능, 실제 의미 유사도는 아님).
+        if self.mode == "mock":
+            digest = hashlib.sha256(text.encode("utf-8")).digest()
+            return [b / 255 for b in digest]
+
+        response = self._client.embeddings.create(model=_EMBEDDING_MODEL, input=text)
+        return response.data[0].embedding
 
     def translate_card_fields(
         self, task: str, request_type: str, interpretation_note: str | None, notes: list[str], target_lang: str
