@@ -683,13 +683,34 @@ recall=0.524, precision=**0.786**(이번 세션 최고 precision, 최저 recall)
 고정) → `773194f`(E1 실측 문서화). 상세 수치·해석은
 `docs/survey-results-analysis.md` 11~12절.
 
+**시드 고정 효과 검증(실측, 부정적 결과)**: 같은 코드·프롬프트·seed=42·
+temperature=0으로 gpt-4o-mini 골든셋 36개를 캐시 없이 두 번 돌려 비교 —
+recall/precision이 여전히 다르게 나옴(0.429/0.900 vs 0.524/0.846), 여러 케이스의
+판정 자체가 뒤집힘. 단발 호출은 완전히 결정적임을 별도 확인(seed 자체는 정상
+작동) — **OpenAI가 배치 구조화 출력에서는 seed 결정성을 보장하지 않는다("best
+effort")** 는 게 원인으로 보임. "시드 고정 = 재현성 확보"라는 가설은 기각,
+self-consistency가 이 노이즈에 대한 유일한 구조적 해법이라는 결론으로 이어짐.
+상세: `docs/survey-results-analysis.md` 13절.
+
+**E2(self-consistency) 구현·첫 측정**: `LLMClient.extract_consistent(draft, context,
+n=3, threshold=2)` 신설 — `extract_batch()` 재사용해 같은 메시지를 n회 독립 추출,
+`_vote_extraction()`(순수 함수, `tests/test_consistency.py` 6개로 API 없이 검증)이
+카테고리별 다수결. `eval/cli.py`에 `--consistency N` 노출. RPD 절약 위해 T01~F05
+20케이스 부분집합으로 측정(gpt-4o-mini, n=3, t=2) — **recall 1.000(만점)까지
+올라갔지만 precision은 0.900→0.714로 오히려 떨어짐**(FP 1건→4건), self-consistency의
+원래 의도(과탐지를 다수결로 걸러 precision 개선)와 반대 방향. threshold=2/3이
+너무 관대했을 가능성 등 원인 후보는 있지만, 측정 도중 gpt-4o-mini RPD가 13/50까지
+줄어(케이스당 1요청 구조라 20케이스=20요청 소모) threshold=3 재측정을 오늘 못 함 —
+**E2는 채택/기각 결론 보류**, 다음 세션 RPD 리셋 후 이어감.
+
 ### Next
 
-- 시드 고정 효과 검증: 같은 설정으로 `ditto-eval`을 두 번 돌려 결과가 정확히
-  같은지 확인(오늘 남은 RPD 있는 모델로) — 아직 미실행
-- E2(self-consistency): `extract_batch()`를 재사용해 같은 draft를 n=3으로 묶어
-  카테고리 다수결 — 코드 설계는 plan 파일에 있음, 미착수
+- **RPD 리셋 후 최우선**: E2 threshold=3(만장일치) 재측정, 가능하면 n=5도 —
+  threshold=2가 너무 관대했는지 확인. 같은 20케이스 부분집합으로 시드검증 두
+  실행과 나란히 비교(표는 survey-results-analysis.md 14절에 이미 있음)
+- E2 결론 나면(채택/기각) `graph/build.py`/`interface.configure()`에 반영할지 결정
+  (verify-loop처럼 안 되면 옵션으로만 남기고 기본은 끔)
 - E3(RAG 동적 few-shot): 시간 되면, 미착수
 - `.env`(gpt-4o-mini) vs `.env.example`(gpt-5-mini) 최종 모델 선택 후 일치시킬 것
-- 오늘 gpt-5/gpt-5-mini/gpt-4o-mini 전부 RPD 소진 — 내일 재측정 필요, 그 전까지는
-  라이브 eval 호출 자제
+- gpt-4o-mini 오늘 RPD 13/50 남음(리셋까지 약 17시간) — 남은 예산 아껴 쓸 것,
+  gpt-5/gpt-5-mini는 어제부터 계속 소진 상태(리셋 여부 미확인)
