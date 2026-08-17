@@ -281,13 +281,17 @@ class LLMClient:
         }
 
     def extract_consistent(
-        self, draft: str, context: DraftContext, n: int = 3, threshold: int = 2
+        self, draft: str, context: DraftContext, n: int = 3, threshold: int | None = None
     ) -> ExtractionResult:
         # seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 사라진다는 걸 실측으로
         # 확인함(survey-results-analysis.md 13절) — 같은 메시지를 n번 독립 추출해 카테고리
         # 단위로 다수결하면 이 노이즈를 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
         # 같은 (draft, context)를 n개 항목처럼 묶어 보내므로 API 호출 수는 그대로 1번(배치
         # 크기만 n)이라 RPD 부담이 늘지 않는다.
+        # threshold 기본값은 과반(n//2+1)이 아니라 **만장일치(n)** — 2026-08-17 실측(13-1절)에서
+        # 과반은 오히려 precision을 깎아먹었고(0.714) 만장일치로 올리니 recall/precision 둘 다
+        # 만점이 나왔다. 더 관대한 기준을 원하면 호출부에서 threshold를 명시적으로 낮추면 됨.
+        threshold = threshold if threshold is not None else n
         runs = self.extract_batch([(draft, context)] * n)
         results = [runs[i] for i in range(n)]
         return _vote_extraction(results, threshold)

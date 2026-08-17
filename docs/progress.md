@@ -788,3 +788,30 @@ gpt-4.1-nano, gpt-5-nano 4개를 추가 측정(사용자가 "다른 미니 모�
 - E3(RAG 동적 few-shot): 코드/설계만이라도 이번 세션에 진행 가능(RPD 불필요)
 - gpt-5-nano를 향후 후보로 남겨둠 — 언젠가 36케이스 전체·재현성까지 검증되면
   전환 고려
+
+## 2026-08-17 (계속) — E2 threshold=3 재측정(채택) + 기본값 만장일치로 변경
+
+당일 마감이라 gpt-4o-mini RPD 리셋(내일)을 못 기다리고, budget이 넉넉한 o3-mini로
+같은 20케이스에 threshold=3(만장일치)만 바꿔 재측정 — **recall=1.000,
+precision=1.000**(20/20 전부 정답). threshold=2(과반, precision 0.714)보다 훨씬
+좋고 non-consistency 베이스라인(0.900~1.000)도 뛰어넘음. "과반이 너무 관대한
+기준이었다"는 가설이 정확히 맞아떨어짐 — **E2 채택 결정**.
+
+이 결과를 반영해 `LLMClient.extract_consistent()`와 `eval/cli.py`의
+`--consistency-threshold` 기본값을 **과반(n//2+1) → 만장일치(n)** 로 변경. 45→53개
+테스트 전부 통과, ruff 클린.
+
+**한계(정직하게 기록)**: o3-mini로 검증했지 최종 프로덕션 모델(gpt-4o-mini)로는
+아직 직접 확인 못 함(오늘 gpt-4o-mini 요청 2개만 남음) — 내일 RPD 리셋 후 같은
+20케이스로 gpt-4o-mini 재확인 필요. 상세: `docs/survey-results-analysis.md`
+13-1절.
+
+### Next
+
+- **내일 최우선**: gpt-4o-mini로 threshold=3(만장일치) 20케이스 재확인 — o3-mini
+  결과가 모델 무관하게 재현되는지
+- 36케이스 전체(DECISION_STATUS 포함)로도 self-consistency 만장일치 효과 검증
+- E3(RAG 동적 few-shot) 착수
+- E2가 최종 확인되면 `graph/build.py`/`interface.configure()`에 `use_consistency`
+  같은 옵션으로 노출할지 결정(verify-loop 패턴과 다르게, 이번엔 실측이 긍정적이라
+  채택 방향)

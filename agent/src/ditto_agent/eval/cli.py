@@ -63,7 +63,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         "--consistency-threshold",
         type=int,
         default=None,
-        help="--consistency일 때만 씀 — 카테고리 채택에 필요한 최소 득표 수. 생략하면 과반(n//2+1)",
+        help="--consistency일 때만 씀 — 카테고리 채택에 필요한 최소 득표 수. 생략하면 만장일치(n) —"
+        " 2026-08-17 실측(survey-results-analysis.md 13-1절)에서 과반(n//2+1)은 precision을"
+        " 오히려 깎아먹었고(0.714) 만장일치는 recall/precision 둘 다 만점이 나옴.",
     )
     return parser.parse_args(argv)
 
@@ -234,7 +236,7 @@ def main(argv: list[str] | None = None) -> int:
     client = LLMClient()
     verify = args.verify
     consistency_n = args.consistency
-    consistency_threshold = args.consistency_threshold or (consistency_n // 2 + 1 if consistency_n else 0)
+    consistency_threshold = args.consistency_threshold or consistency_n
     stage = f"extract-consistency-n{consistency_n}-t{consistency_threshold}" if consistency_n else (
         "extract+verify" if verify else "extract"
     )
