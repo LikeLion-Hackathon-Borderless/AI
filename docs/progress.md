@@ -1040,3 +1040,38 @@ self-consistency(만장일치, n=3) + E1(규칙 기반 TIME 필터), RAG 제외.
 - leave-one-out 방식(자기 자신의 원본 판단기준표 항목을 RAG 후보에서 제외)으로
   RAG를 유출 없이 재검증하는 건 다음 세션 후보
 - 지연시간(self-consistency 켜면 응답이 더 길어짐) 실사용 체감 확인 필요
+
+## 2026-08-17 (계속) — leave-one-out으로 RAG 재검증(기각 확정) + baseline도 35% 유출 발견
+
+사용자가 "래그를 써서 될 수 있게 정보유출을 막고 검사를 해봐야지"라고 요청 —
+`select_few_shot()`에 `exclude_ids` 추가해 평가 케이스의 `pair_id`를 후보 풀에서
+제외하는 leave-one-out 구현. 직접 재확인: 유출 13/17 → **0/17**로 완전히 막힘.
+
+**o3-mini, 36케이스 전체, leave-one-out 적용 후**:
+
+| consistency | RAG | recall | precision |
+|---|---|---|---|
+| 끔 | 끔(baseline) | 0.857 | 0.720 |
+| 끔 | 켬(leave-one-out) | **0.619** | **0.619** |
+| 켬 | 끔(baseline) | 0.857 | 0.750 |
+| 켬 | 켬(leave-one-out) | 0.762 | 0.800 |
+
+유출을 막으니 RAG가 baseline보다 확실히 나빠짐 — §17-3의 "1.000/0.875 최고 결과"는
+처음부터 끝까지 유출 때문이었음이 완전히 확인됨. **RAG 기각 재확정, 이번엔 근거가
+탄탄함.**
+
+**추가로 사용자가 "RAG 전 baseline은 유출 없었냐"고 질문** — 확인해보니 **있었다.**
+고정 `FEW_SHOT_ALLOWLIST`(T01/T04/F01/F02/D02/D04)가 golden set 17개 중 6개(35%)의
+pair_id와 겹쳐서, 이 6개 케이스는 baseline에서도 항상 자기 자신을 few-shot으로
+받아봄. 즉 **이번 세션 내내(baseline, E0, E1, E2) 쓴 숫자들도 이 정도(35%)
+낙관 편향이 섞여 있을 수 있음** — 오늘 마감 안엔 못 고치고 다음 세션 최우선
+TODO로 명시(진짜 해법은 골든셋과 few-shot 풀을 완전히 분리하는 것). 상세:
+`docs/survey-results-analysis.md` 17-5/17-6절.
+
+### Next
+
+- **[최우선]** baseline(고정 allowlist)의 35% 유출 문제 해결 — 골든셋과 few-shot
+  풀을 완전히 분리해서 재측정. 그 전까지 이번 세션의 모든 recall/precision
+  절대값은 참고용으로만 볼 것
+- PR #3(`feat/agent-scaffold-dev` → `dev`)에 이 최종 상태(RAG 기각 확정,
+  leave-one-out 인프라 포함) 반영
