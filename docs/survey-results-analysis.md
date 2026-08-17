@@ -848,19 +848,98 @@ allowlist가 동적 선택보다 낫거나 최소한 뒤지지 않는다. `use_r
 같은 문제. `docs/survey-results-analysis.md`에 지금까지 적힌 baseline/E-시리즈
 recall/precision 숫자는 전부 이 정도의 낙관 편향이 섞여 있을 수 있다는 뜻.
 
-**왜 지금 안 고치나(의도적 보류)**: 고정 allowlist를 leave-one-out처럼 케이스별로
-동적으로 바꾸는 건 사실상 RAG를 다시 쓰는 것과 다름없고, 진짜 해법은 **골든셋과
-few-shot 풀을 완전히 분리**(판단기준표에 없는 새 문장으로 few-shot을 만들거나,
-골든셋 쪽을 판단기준표와 안 겹치는 새 문장으로 다시 만드는 것)인데 오늘 마감
-안에는 범위가 너무 큼 — 다음 세션 TODO로 명시적으로 남김.
+**(수정, 아래 17-7 참고)**: 위 "다음 세션 TODO"로 미뤘던 걸 사용자가 즉시
+"래그를 써서 될 수 있게 정보유출을 막고 검사를 해봐야지"라고 요청해서 오늘 안에
+바로 처리함 — 아래 17-7/17-8/18절.
+
+### 17-7. 고정 allowlist에도 leave-one-out 적용 — RAG와 동일한 수법으로 baseline 유출도 막음
+
+`eval/cli.py`에 `_leak_safe_few_shot_ids(client, case, use_rag)` 헬퍼를 신설 —
+`use_rag=True`면 기존처럼 `select_few_shot(..., exclude_ids={case.pair_id})`,
+`use_rag=False`(고정 allowlist)면 **`FEW_SHOT_ALLOWLIST - {case.pair_id}`** 를
+반환. `--batch`를 제외한 sequential/consistency 경로 전부에 적용. 실제로 유출이
+막혔는지 재확인: 고정 allowlist 유출 6/17 → **0/17**. 테스트 3개 추가(전체 78개
+통과).
+
+### 17-8. Leave-one-out 적용 후 o3-mini 36케이스 전체 4가지 조합 재측정
+
+| consistency | RAG | recall | precision | TP | FP | FN |
+|---|---|---|---|---|---|---|
+| 끔 | 끔(진짜 baseline) | 0.810 | 0.708 | 17 | 7 | 4 |
+| 끔 | 켬(leave-one-out) | 0.619 | 0.619 | 13 | 8 | 8 |
+| 켬 | 끔 | 0.714 | 0.789 | 15 | 4 | 6 |
+| 켬 | 켬(leave-one-out) | 0.762 | 0.800 | 16 | 4 | 5 |
+
+RAG는 유출 없이도 baseline보다 모든 조합에서 나쁨 — **RAG 기각 최종 확정**(추가
+검증 불필요, 17-9의 카테고리 불균형 분석으로 원인도 설명됨).
+
+self-consistency(끔 vs 켬, RAG 없이)는 recall 0.810→0.714, precision
+0.708→0.789로 진짜처럼 보이는 트레이드오프가 나왔지만, 단일 실행(n=36) 하나로는
+이 세션 내내 봐온 노이즈(§13)와 구분이 안 돼 §18에서 반복 측정으로 검증함.
+
+### 17-9. RAG가 나빴던 이유 — 카테고리 불균형
+
+고정 allowlist는 TIME/REQUEST_INTENT/DECISION_STATUS 2-2-2 균형을 항상 유지하는데,
+RAG(leave-one-out 적용)가 실제로 고른 조합을 카테고리별로 세어보면 자주 한쪽에
+쏠린다:
+
+```
+T03-ambiguous: {TIME: 4, DECISION_STATUS: 2}                    ← REQUEST_INTENT 0개
+T04-ambiguous: {DECISION_STATUS: 3, TIME: 3}                    ← REQUEST_INTENT 0개
+F04-ambiguous: {REQUEST_INTENT: 4, DECISION_STATUS: 2}          ← TIME 0개
+F05-ambiguous: {REQUEST_INTENT: 4, DECISION_STATUS: 2}          ← TIME 0개
+D04-ambiguous: {TIME: 4, DECISION_STATUS: 2}                    ← REQUEST_INTENT 0개
+```
+
+후보 풀이 16개뿐이라 "draft와 텍스트로 비슷한 것"과 "카테고리를 골고루 커버하는
+것"이 자주 충돌한다 — 예를 들어 TIME 관련 draft는 TIME 항목들과 코사인 유사도가
+높아 그쪽으로 몰리고, 정작 같은 메시지에 섞여 있는 REQUEST_INTENT/DECISION_STATUS
+모호성을 탐지할 few-shot 신호가 사라진다. recall이 떨어진 이유를 구조적으로
+설명함(노이즈가 아님 — 재측정할 필요 없음).
+
+## 18. Self-consistency 트레이드오프 반복 측정 — 노이즈 vs 신호 판별 (최종 결정)
+
+17-8의 단일 실행(n=36) 트레이드오프가 진짜인지 이 세션 내내 반복 확인된 노이즈인지
+구분하기 위해, 사용자 승인(plan mode)을 받아 **같은 36케이스를 consistency
+끔/켬 각각 3회씩(총 6회) 반복 실행**하고 TP/FP/FN을 합산(pooled)했다.
+
+| 실행 | consistency 끔 recall/precision | consistency 켬 recall/precision |
+|---|---|---|
+| 1회 | 0.810 / 0.708 | 0.714 / 0.789 |
+| 2회 | 0.762 / 0.762 | 0.762 / 0.762 |
+| 3회 | 0.857 / 0.818 | 0.762 / 0.941 |
+| **pooled(n=108)** | **0.810 / 0.761** | **0.746 / 0.825** |
+
+**단일 실행 노이즈가 실제로 컸다**(끔 조건만 봐도 recall이 0.762~0.857로
+±0.05 이상 흔들림 — §13에서 처음 확인했던 것과 같은 패턴이 여기서도 재현됨).
+그럼에도 **방향은 3쌍 중 2쌍에서 일관됐고(끔이 recall 높고 precision 낮음, 켬은
+반대) 1쌍은 정확히 동률, 역전은 한 번도 없었다** — 즉 노이즈에 묻힌 가짜 신호가
+아니라 **진짜 트레이드오프**로 결론. 다만 pooling한 진짜 격차는 단일 실행이
+시사했던 것(recall −10%p)보다 작다(recall −6.4%p, precision +6.4%p) — 이것도
+단일 실행만 믿으면 안 되는 이유를 보여줌.
+
+**최종 결정(사용자 확정)**: recall 우선 — `use_consistency` 기본값을 다시
+**False**로. 근거: (1) 오해 방지 도구는 놓친 모호성(FN)이 조용히 실패하는 게
+과탐지(FP)보다 치명적, (2) precision 0.761도 사용자가 감당 못 할 수준은 아님
+(4개 중 3개는 맞음), (3) consistency 켬은 응답을 n배 생성해야 해서 지연시간도
+늘어나는데 recall 우선(꺼짐) 쪽이 빠르기까지 함 — 정확도·속도 둘 다 이득.
+`use_consistency=True` 옵션은 그대로 남겨둬서 precision이 더 중요한 사용 사례가
+생기면 언제든 켤 수 있음.
+
+**최종 프로덕션 조합(확정)**: o3-mini + E1(규칙 기반 TIME 필터), self-consistency·
+RAG 둘 다 기본 꺼짐(옵션으로만 존재).
+
+**Phase 2(다음 TODO, 사용자 결정)**: 골든셋을 36개보다 더 키워서(새 파라프레이즈
+추가, few-shot 풀과 안 겹치는 새 문장으로) 이 결론을 더 큰 표본으로 재검증하는
+건 **QA 기간 동안 사용자가 직접 진행**하기로 함 — 오늘 세션 범위 밖으로 명시적
+이관.
 
 ## Next
 
-- **[신규, 우선순위 높음]** baseline(고정 allowlist)의 35% 유출 문제 해결 — 골든셋과
-  few-shot 풀을 완전히 분리(판단기준표에 없는 새 문장으로 few-shot 재구성, 또는
-  골든셋을 판단기준표와 안 겹치는 새 문장으로 재작성). 지금까지의 baseline/
-  E0/E1/E2 recall/precision 숫자는 이 문제가 섞여 있어 절대값을 그대로 믿지 말 것
-  (17-6절)
+- ~~baseline(고정 allowlist)의 35% 유출 문제 해결~~ **완료(17-7절)** —
+  `_leak_safe_few_shot_ids()`로 leave-one-out 적용, 유출 0/17로 확인
+- **[QA 기간, 사용자 진행]** 골든셋을 36개보다 키워서(few-shot 풀과 안 겹치는 새
+  문장으로) recall/precision 트레이드오프 결론(§18)을 더 큰 표본으로 재검증
 - `docs/문화_판단기준표_초안.md`의 D01/D03/D05/F03/F04 설명을 "모호함" → "국내 컨센서스는
   있으나 상대 문화/조직과 기본값이 다름"으로 재작성
 - 자유서술 응답(D-Q6, T-Q6, F-Q7) 중 실사례 인용 검토 — T 응답 1건("기한을 주지 않으셔서

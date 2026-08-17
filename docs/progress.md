@@ -1070,8 +1070,58 @@ TODO로 명시(진짜 해법은 골든셋과 few-shot 풀을 완전히 분리하
 
 ### Next
 
-- **[최우선]** baseline(고정 allowlist)의 35% 유출 문제 해결 — 골든셋과 few-shot
-  풀을 완전히 분리해서 재측정. 그 전까지 이번 세션의 모든 recall/precision
-  절대값은 참고용으로만 볼 것
+- ~~baseline(고정 allowlist)의 35% 유출 문제 해결~~ **완료(아래 계속)**
 - PR #3(`feat/agent-scaffold-dev` → `dev`)에 이 최종 상태(RAG 기각 확정,
   leave-one-out 인프라 포함) 반영
+
+## 2026-08-17 (계속) — baseline도 leave-one-out으로 유출 차단 + 6회 반복 측정으로 최종 확정
+
+사용자가 "래그를 써서 될 수 있게 정보유출을 막고 검사를 해봐야지"라고 요청 —
+고정 `FEW_SHOT_ALLOWLIST`에도 leave-one-out을 적용(`_leak_safe_few_shot_ids()`
+신설, `eval/cli.py`). 유출 6/17 → **0/17**로 확인. 78개 테스트 통과, ruff 클린.
+
+**유출 없는 4가지 조합 재측정(o3-mini, 36케이스 전체)**:
+
+| consistency | RAG | recall | precision |
+|---|---|---|---|
+| 끔 | 끔 | 0.810 | 0.708 |
+| 끔 | 켬 | 0.619 | 0.619 |
+| 켬 | 끔 | 0.714 | 0.789 |
+| 켬 | 켬 | 0.762 | 0.800 |
+
+RAG는 모든 조합에서 baseline보다 나쁨 — **기각 최종 확정**. 원인도 확인: 고정
+allowlist는 항상 TIME/REQUEST_INTENT/DECISION_STATUS 2-2-2 균형인데, RAG는
+카테고리가 자주 한쪽으로 쏠림(예: T03은 REQUEST_INTENT 0개, F04/F05는 TIME
+0개) — 후보 풀이 16개뿐이라 "비슷한 것"과 "골고루 커버"가 충돌해서 recall이
+빠짐(노이즈 아님, 재측정 불필요).
+
+**self-consistency 트레이드오프는 plan mode로 반복 측정 후 확정**: 단일 실행
+(recall 0.810→0.714)이 노이즈인지 진짜인지 판별하려고 사용자 승인 받아 같은
+36케이스를 조건당 3회씩(총 6회) 반복 실행, TP/FP/FN을 pooled:
+
+| | recall | precision |
+|---|---|---|
+| consistency 끔(pooled n=108) | **0.810** | 0.761 |
+| consistency 켬(pooled n=108) | 0.746 | **0.825** |
+
+방향이 3쌍 중 2쌍 일관(1쌍은 정확히 동률, 역전 없음) — **진짜 트레이드오프로
+확정**, 다만 격차는 단일 실행이 시사했던 것보다 작음(recall −6.4%p).
+
+**최종 결정(사용자 확정)**: recall 우선 — `use_consistency` 기본값을 다시
+**False**로. 오해 방지 도구는 놓친 모호성(FN)이 과탐지(FP)보다 치명적이고,
+precision 0.761도 충분히 쓸 만하며, consistency 끔이 지연시간도 더 나음(3배
+응답 생성 안 함) — 정확도·속도 둘 다 이득. `use_consistency=True` 옵션은 그대로
+남김.
+
+**최종 프로덕션 조합**: o3-mini + E1(규칙 기반 TIME 필터). self-consistency·
+RAG는 둘 다 기본 꺼짐(옵션으로만 존재). 상세: `docs/survey-results-analysis.md`
+17-7~17-9/18절.
+
+**Phase 2(골든셋 확장으로 더 큰 표본 검증)는 QA 기간 동안 사용자가 직접
+진행**하기로 명시적으로 합의 — 오늘 세션 범위 밖.
+
+### Next
+
+- PR #3(`feat/agent-scaffold-dev` → `dev`)에 이 최종 상태(recall 우선 확정,
+  self-consistency/RAG 옵션으로 유지) 반영
+- QA 기간: 골든셋 확장(few-shot 풀과 안 겹치는 새 문장)으로 §18 결론 재검증
