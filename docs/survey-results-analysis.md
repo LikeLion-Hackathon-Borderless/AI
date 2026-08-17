@@ -335,6 +335,61 @@ precision이 크게 흔들린다. `extract()`가 완전히 결정적이지 않�
   다수결 구조를 "1차 결과가 애매할 때만 추가 확인"으로 조건부 실행하는 형태로
   재구성해 별도 스테이지 없이 흡수
 
+## 12. E1(규칙 기반 TIME 후처리) 구현 + 측정 — 3개 모델 RPD 전부 소진으로 조기 종료
+
+**구현**: `agent/src/ditto_agent/llm/postfilter.py` 신설 —
+`filter_false_positive_time(draft, ambiguities)`: TIME 카테고리 항목 중 (요일/날짜
++ 시각(+시간대) 둘 다 있음) 또는 (명시적 "N시간 안에" 형태) 조건을 만족하면서
+"내일/낼/곧/빠른/가능하면/여유/최대한/일단/이따가" 같은 모호 마커가 **없을 때만**
+제거. `LLMClient.extract()`/`extract_batch()`에서 반환 직전 적용 — 그래프·eval 둘
+다 자동 적용됨. golden set 17개 페어 전체(T01-05, C02-time-only 등)를 스크립트로
+사전 검증해 설계대로 동작함을 확인(모든 explicit 케이스는 `True`, 모든 ambiguous
+케이스는 `False`). 테스트 9개 신설, 전체 45개 통과.
+
+**캐시 버그 발견·수정**: E1 첫 측정에서 E0와 소수점까지 동일한 precision이 나와
+조사 — `eval/cache.py`의 캐시 키가 **프롬프트 해시만** 반영하고 postfilter처럼
+프롬프트가 아닌 순수 후처리 코드 변경은 감지 못해, E0의 캐시(필터 적용 전)를 그대로
+재사용하고 있었다. `_code_hash()`(postfilter.py 소스 해시)를 캐시 키에 추가해 수정.
+
+**측정 시도 3번, 전부 RPD로 조기 종료**:
+1. gpt-5-mini, 캐시 버그로 무효(0.905/0.442 — E0와 동일, 캐시 재사용된 것)
+2. gpt-5-mini, 캐시 지우고 재측정 → **RateLimitError: RPD Limit 50, Used 50**
+   (4/36에서 중단, gpt-5-mini도 오늘 한도 소진 확인)
+3. **gpt-4o-mini로 전환**(사용자 선택) → 36/36 완주: **recall=0.524, precision=0.786**
+   — 카테고리별: TIME recall 0.625/precision **1.0**(FP 0건), REQUEST_INTENT
+   recall 0.714/precision 0.625, DECISION_STATUS recall **0.167**(FN 5건)/precision 1.0
+
+**해석**: gpt-4o-mini는 이번 세션 최고 precision을 냈지만 recall이 최저(특히
+DECISION_STATUS를 거의 못 잡음, 6개 중 1개만 탐지) — 더 작고 보수적인 모델이라
+과탐지는 적지만 미묘한 문화적 모호성 포착 능력 자체가 약한 것으로 보인다. TIME
+카테고리 FP가 0건인 건 E1 필터가 실제로 기여했을 수도 있지만, gpt-4o-mini 자체가
+원래 TIME을 잘 안 틀리는 모델일 수도 있어 **E1의 순수 효과를 이 결과만으로
+분리할 수 없다**.
+
+**세션 내 모델 3개 전부 RPD 소진**(gpt-5, gpt-5-mini, gpt-4o-mini) — 이 계정
+(결제수단 미등록 티어)은 모델당 하루 50개가 하드 캡이라, 오늘 안에 새 모델로
+갈아타는 것도 한계에 도달했다. **E2(self-consistency)·E3(RAG)는 이번 세션에서
+착수하지 못하고 다음 세션으로 넘김** — 코드 설계는 plan 파일에 남아있어 바로
+이어서 구현 가능.
+
+### 이번 세션 전체 실측 요약 (참고용 — 모델·프롬프트가 계속 바뀌어 직접 비교 주의)
+
+| 실험 | 모델 | recall | precision |
+|---|---|---|---|
+| baseline | gpt-5 | 0.810 | 0.739 |
+| reason-sync | gpt-5 | 0.905 | 0.655 |
+| + allowlist-swap, no-verify | gpt-5-mini | 0.905 | 0.679 |
+| + verify-loop | gpt-5-mini | 0.952 | 0.500 |
+| + reason-trim (E0) | gpt-5-mini | 0.905 | 0.442 |
+| + E1(규칙 필터) | gpt-4o-mini | **0.524** | **0.786** |
+
+**결론**: 표본 하나씩이라 노이즈가 크고 모델도 계속 바뀌어 "이 변경이 진짜 원인"이라고
+단정할 수 있는 게 거의 없다 — 유일하게 확실한 건 **verify-loop은 명확히 나쁘다**는
+것(가장 큰 낙폭, 2번 실험에서 방향 일관됨)과 **모델 선택 자체가 recall/precision
+트레이드오프에 reason-sync 같은 프롬프트 튜닝보다 훨씬 큰 영향을 준다**는 것.
+다음 세션에서 self-consistency로 노이즈를 줄이고, 같은 모델로 통제된 비교를 해야
+E1/E3의 순수 효과를 알 수 있음.
+
 ## Next
 
 - `docs/문화_판단기준표_초안.md`의 D01/D03/D05/F03/F04 설명을 "모호함" → "국내 컨센서스는
