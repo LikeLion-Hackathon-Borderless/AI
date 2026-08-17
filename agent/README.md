@@ -2,9 +2,7 @@
 
 발신자 메시지의 시간/의미 모호성을 감지하고, 발신자가 확정할 때까지 멈췄다가(LangGraph
 `interrupt()`) 확정되면 "공동 이해 카드"를 만들어 반환하는 에이전트 패키지. 멋쟁이사자처럼
-14기 중앙해커톤 "보더리스 협업" 트랙 프로젝트의 AI 모델 파트. FastAPI 라우터/DB/
-프론트엔드는 이 패키지 밖(다른 팀원 담당)이며, `start()`/`resume()`/`configure()` 세
-함수가 유일한 접점.
+14기 중앙해커톤 "보더리스 협업" 트랙 프로젝트의 AI 모델 파트.
 
 ## 아키텍처
 
@@ -30,6 +28,23 @@ flowchart TB
 `build_card`(카드 생성) → `translate_card`(수신자 언어 설정 시만 번역)를 거쳐 끝난다.
 모호성이 없으면 아예 멈추지 않고 바로 끝까지 진행("모호성이 없으면 경고를 억제" 원칙).
 
+### 모델 내부 — `extract` 파이프라인
+
+```mermaid
+flowchart LR
+    D["draft + DraftContext"] --> SP["build_system_prompt()\nculture_criteria.py few-shot"]
+    D --> UP["build_user_prompt()"]
+    SP --> CALL["OpenAI chat.completions.parse\n(o3-mini, 구조화 출력)"]
+    UP --> CALL
+    CALL --> PF["filter_false_positive_time()\n규칙 기반 후처리"]
+    PF --> ER["ExtractionResult"]
+```
+
+`extract` 노드 안에서는 draft와 판단기준표(`culture_criteria.py`)에서 뽑은 few-shot
+예시로 시스템 프롬프트를 만들어 OpenAI 구조화 출력 호출을 하나 보내고, 응답이 오면
+규칙 기반 후처리(`postfilter.py`)로 명시적 시각 표현이 TIME 모호성으로 잘못 잡힌
+케이스를 걸러낸다 — API 호출 없이 코드로만 처리해서 정밀도를 올리는 마지막 단계.
+
 ## 설치 & 실행
 
 ```bash
@@ -42,27 +57,31 @@ uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐�
 
 ## 트랙 경계(Border) 대응
 
-멋쟁이사자처럼 트랙(지리/언어/문화/조직 4개 경계) 기준으로 이 패키지가 실제로 커버하는
-범위:
+멋쟁이사자처럼 트랙이 정의한 4개 경계(지리/문화/조직/언어) 기준으로 이 패키지가 실제로
+커버하는 범위:
 
-| Border | 대응 | 새 UI 필요? |
+| Border | 대응 방식 | 새 UI 필요 여부 |
 |---|---|---|
-| 지리 | TIME 카테고리 + `graph/conflict.py`(근무시간 충돌) | 아니오 — 기존 카드의 `기한` 필드 |
-| 문화 | REQUEST_INTENT(완곡한 반대 등, 문헌 검증 가장 탄탄함) | 아니오 |
-| 조직 | DECISION_STATUS를 `DECISION_STATUS_VOCABULARY`(최종 확정/임시 시도/1차 완료/제안/보류/미정) 6개로 **정규화** — "승인"/"완료"/"컨펌"의 조직별 뜻 차이를 흡수 | 아니오 — 기존 `결정 상태` 필드 |
-| 언어 | `DraftContext.receiver_lang` 설정 시 `translate_card_node`가 카드의 자유 텍스트(`task`/`request_type`/`interpretation_note`/`notes`)만 번역, 구조화된 값(타임스탬프·정규화된 상태)은 안 건드림 | 아니오 — 같은 카드 필드, 값만 로컬라이즈 |
-| ~~Communicating(OTHER)~~ | **의도적으로 제외** — 골든셋 실측 결과 recall이 다른 카테고리 대비 크게 낮고, 문헌 조사로도 "간접화법/톤 해석은 최고 성능 LLM도 사람 수준 미달"이 확인돼 이번 스코프에서 뺐다 | - |
+| 지리 | TIME 카테고리 + `graph/conflict.py`(근무시간 충돌 검사) | 불필요 — 기존 카드의 `기한` 필드로 표현 |
+| 문화 | REQUEST_INTENT(완곡한 반대 표현 등 — 문헌 근거가 4개 카테고리 중 가장 탄탄) | 불필요 |
+| 조직 | DECISION_STATUS를 `DECISION_STATUS_VOCABULARY`(6개 정규화 상태값)로 **정규화**해 "승인"/"완료"/"컨펌"의 조직별 뜻 차이를 흡수 | 불필요 — 기존 `결정 상태` 필드로 표현 |
+| 언어 | `DraftContext.receiver_lang` 설정 시 `translate_card_node`가 카드의 자유 텍스트 필드만 번역, 구조화된 값(타임스탬프·정규화된 상태)은 그대로 둠 | 불필요 — 같은 카드 필드, 값만 로컬라이즈 |
 
-**번역은 모호성 확정 *이후*에만 한다** — 먼저 번역하면 번역기가 여러 해석 중 하나를
+**Communicating(톤/맥락 해석)은 의도적으로 스코프에서 제외했다** — 골든셋 실측에서
+다른 카테고리 대비 recall이 크게 낮았고, 최고 성능 LLM도 간접화법·톤 해석은 사람 수준에
+못 미친다는 문헌 근거까지 확인됐다(`docs/culture-criteria.md` 부록 참고).
+
+**번역은 모호성 확정 이후에만 한다** — 먼저 번역하면 번역기가 여러 해석 중 하나를
 암묵적으로 골라버려서, 발신자가 명시적으로 확정하기 전에 모호성이 사라져버린다(이
-프로젝트의 핵심 원칙 위반). `evidence`(원문)는 번역 안 하고 그대로 둔다 — 원문 확인이
-필요하면 그쪽을 보면 됨.
+프로젝트의 핵심 원칙 위반). `evidence`(원문)는 번역하지 않고 그대로 둔다.
 
 ## 판단기준표 & 데이터셋 구성
 
-모호성 판단 근거는 `docs/문화_판단기준표_초안.md`의 TIME/REQUEST_INTENT/DECISION_STATUS
-16개 항목(OTHER 4개는 위 이유로 제외) — 문헌 조사에 이어 설문(직장인·학생 대상, 세 축
-각각 n=12~15)과 한국·호주·미국 근무 경험이 있는 현직 개발자 인터뷰로 1차 검증했다.
+모호성 판단 근거는 **[`docs/culture-criteria.md`](../docs/culture-criteria.md)** 의
+TIME/REQUEST_INTENT/DECISION_STATUS 16개 항목(OTHER 4개는 위 이유로 제외) — 문헌 조사에
+이어 설문(직장인·학생 대상, 세 축 각각 n=12~15)과 한국·호주·미국 근무 경험이 있는 현직
+개발자 인터뷰로 1차 검증했다. 이 설문 결과가 정확히 어떻게 골든셋 구성으로 이어졌는지는
+그 문서의 "How the Golden Set Was Built" 절 참고.
 
 이 16개 항목을 기반으로 골든셋(`agent/data/golden.json`, 36케이스)을 만들었다:
 
