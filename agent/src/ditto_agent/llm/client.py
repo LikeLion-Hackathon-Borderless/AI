@@ -2,6 +2,7 @@ import os
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+from ditto_agent.llm.postfilter import filter_false_positive_time
 from ditto_agent.llm.prompts import (
     BATCH_VERIFY_SYSTEM_PROMPT,
     TRANSLATE_SYSTEM_PROMPT,
@@ -106,7 +107,8 @@ class LLMClient:
 
     def extract(self, draft: str, context: DraftContext) -> ExtractionResult:
         if self.mode == "mock":
-            return _mock_extract(draft, context)
+            result = _mock_extract(draft, context)
+            return result.model_copy(update={"ambiguities": filter_false_positive_time(draft, result.ambiguities)})
 
         now_iso = context.now_iso or datetime.now(ZoneInfo(context.sender_tz)).isoformat()
         completion = self._client.chat.completions.parse(
@@ -120,7 +122,7 @@ class LLMClient:
         parsed = completion.choices[0].message.parsed
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
-        return parsed
+        return parsed.model_copy(update={"ambiguities": filter_false_positive_time(draft, parsed.ambiguities)})
 
     def verify(self, draft: str, ambiguities: list[AmbiguityItem]) -> list[AmbiguityItem]:
         # 1차 extract()가 flag한 후보를 회의적으로 재검토해 과탐지를 제거하는 2차 호출.
@@ -177,8 +179,14 @@ class LLMClient:
         # 골든셋 평가처럼 서로 무관한 메시지 다수를 한 번에 처리할 때 씀 — 요청 수(RPD) 자체가
         # 쿼터인 계정에서는 메시지당 호출 1개보다 이게 훨씬 아낀다. 실사용 흐름(interface.start())은
         # 항상 메시지 1개라 이 메서드를 안 씀 — 배치는 eval 전용.
+        drafts_by_index = {i: draft for i, (draft, _) in enumerate(items)}
+
         if self.mode == "mock":
-            return {i: _mock_extract(draft, ctx) for i, (draft, ctx) in enumerate(items)}
+            mock_results = {}
+            for i, (draft, ctx) in enumerate(items):
+                r = _mock_extract(draft, ctx)
+                mock_results[i] = r.model_copy(update={"ambiguities": filter_false_positive_time(draft, r.ambiguities)})
+            return mock_results
 
         entries = []
         for i, (draft, ctx) in enumerate(items):
@@ -196,7 +204,16 @@ class LLMClient:
         parsed = completion.choices[0].message.parsed
         if parsed is None:
             raise ValueError("OpenAI가 구조화된 응답을 반환하지 않음 (refusal 등) — completion 로그 확인 필요")
-        return {item.index: item.extraction for item in parsed.items}
+        return {
+            item.index: item.extraction.model_copy(
+                update={
+                    "ambiguities": filter_false_positive_time(
+                        drafts_by_index[item.index], item.extraction.ambiguities
+                    )
+                }
+            )
+            for item in parsed.items
+        }
 
     def translate_card_fields(
         self, task: str, request_type: str, interpretation_note: str | None, notes: list[str], target_lang: str
