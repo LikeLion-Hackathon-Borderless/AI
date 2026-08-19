@@ -56,17 +56,17 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=0,
         help="0(기본, 꺼짐)보다 크면 케이스당 extract_consistent(n=이 값)로 self-consistency"
         " 다수결을 씀 — seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 없어지는 게"
-        " 실측으로 확인돼(survey-results-analysis.md 13절) 만든 구조적 대안. 케이스당 API 호출"
-        " 수는 여전히 1번(배치 크기가 n일 뿐)이라 RPD 부담은 안 늘어남. --batch/--verify와는"
-        " 같이 못 씀(둘 다 무시되고 이 경로가 우선).",
+        " 실측으로 확인돼 만든 구조적 대안. 케이스당 API 호출 수는 여전히 1번(배치 크기가"
+        " n일 뿐)이라 RPD 부담은 안 늘어남. --batch/--verify와는 같이 못 씀(둘 다 무시되고"
+        " 이 경로가 우선).",
     )
     parser.add_argument(
         "--consistency-threshold",
         type=int,
         default=None,
         help="--consistency일 때만 씀 — 카테고리 채택에 필요한 최소 득표 수. 생략하면 만장일치(n) —"
-        " 2026-08-17 실측(survey-results-analysis.md 13-1절)에서 과반(n//2+1)은 precision을"
-        " 오히려 깎아먹었고(0.714) 만장일치는 recall/precision 둘 다 만점이 나옴.",
+        " 실측에서 과반(n//2+1)은 precision을 오히려 깎아먹었고(0.714) 만장일치는"
+        " recall/precision 둘 다 만점이 나옴.",
     )
     parser.add_argument(
         "--rag",
@@ -255,9 +255,8 @@ def _leak_safe_few_shot_ids(client: LLMClient, case: GoldenCase, use_rag: bool) 
     # (T01~T05/F01~F06/D01~D05 각각 정확히 매칭되는 pair_id가 있음) — 그래서 few-shot을
     # 뭐로 고르든(고정 allowlist든 RAG든) 그 케이스의 원본 항목이 후보에 남아있으면 정답이
     # 유출된다. 고정 FEW_SHOT_ALLOWLIST={T01,T04,F01,F02,D02,D04}는 이 중 6개 케이스(35%)가
-    # 항상 유출됐고, RAG(코사인 유사도로 동적 선택)는 76%가 유출됐다(2026-08-17 실측,
-    # survey-results-analysis.md 17-5/17-6절) — 둘 다 leave-one-out(자기 자신의 pair_id
-    # 제외)으로 막는다.
+    # 항상 유출됐고, RAG(코사인 유사도로 동적 선택)는 76%가 유출됐다 — 둘 다
+    # leave-one-out(자기 자신의 pair_id 제외)으로 막는다.
     exclude = {case.pair_id} if case.pair_id else set()
     if use_rag:
         return select_few_shot(client.embed, case.draft, k=6, fallback=FEW_SHOT_ALLOWLIST, exclude_ids=exclude)

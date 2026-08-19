@@ -323,8 +323,8 @@ class LLMClient:
         few_shot_ids: set[str] | None = None,
     ) -> ExtractionResult:
         # seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 사라진다는 걸 실측으로
-        # 확인함(survey-results-analysis.md 13절) — 같은 메시지를 n번 독립 추출해 카테고리
-        # 단위로 다수결하면 이 노이즈를 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
+        # 확인함 — 같은 메시지를 n번 독립 추출해 카테고리 단위로 다수결하면 이 노이즈를
+        # 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
         # 같은 (draft, context)를 n개 항목처럼 묶어 보내므로 API 호출 수는 그대로 1번(배치
         # 크기만 n)이라 RPD 부담이 늘지 않는다.
         # threshold 기본값은 과반(n//2+1)이 아니라 **만장일치(n)** — 2026-08-17 실측(13-1절)에서

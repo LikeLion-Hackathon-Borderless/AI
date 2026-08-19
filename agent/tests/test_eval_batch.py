@@ -224,8 +224,7 @@ def test_fetch_live_consistency_aborts_on_rate_limit_but_keeps_partial_results(m
 
 def test_leak_safe_few_shot_ids_excludes_own_pair_id_from_fixed_allowlist():
     # 고정 allowlist(T01/T04/F01/F02/D02/D04)에 속한 pair_id를 가진 케이스는 자기 자신을
-    # 제외한 5개만 받아야 함(2026-08-17 실측 — 안 빼면 35% 유출, survey-results-analysis.md
-    # 17-6절).
+    # 제외한 5개만 받아야 함(실측 — 안 빼면 35% 유출).
     case = GoldenCase(id="T01-ambiguous", draft="d", expected_categories=frozenset(), pair_id="T01")
     result = _leak_safe_few_shot_ids(client=None, case=case, use_rag=False)
     assert result == FEW_SHOT_ALLOWLIST - {"T01"}
