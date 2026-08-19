@@ -9,14 +9,13 @@ SYSTEM_PRINCIPLE = """당신은 비동기 업무 메시지에서 시간·요청 
 - 시간 표현은 임의로 확정하지 말고, 확인이 필요한 후보 시각을 제시하세요.
 - 의미가 여러 갈래로 읽히는 표현은 실제 의도를 발신자가 고르도록 후보 해석을 제시하세요."""
 
-# docs/문화_판단기준표_초안.md 20개 중 OTHER(C01-04)는 제외(docs/research-other-category.md
-# 참고) + 카테고리당 대표 예시 2개씩만 선별. "few-shot이 많을수록 좋은 게 아니라 5~7개
-# 이후 정체되고, 과하면 모델이 산만해져 오히려 정확도가 떨어질 수 있다"는 문헌 근거로
-# 21개(양성 16 + 부정 5)에서 11개로 줄임 — 토큰도 같이 줄어 TPM 여유도 생김
-# (docs/research-few-shot-efficiency.md).
+# docs/culture-criteria.md 16개(T/F/D, OTHER 4개는 구현 제외) 중 카테고리당 대표
+# 예시 2개씩만 선별 — "few-shot이 많을수록 좋은 게 아니라 5~7개 이후 정체되고,
+# 과하면 모델이 산만해져 오히려 정확도가 떨어질 수 있다"는 문헌 근거로 예시 개수를
+# 줄임(토큰도 같이 줄어 TPM 여유도 생김).
 #
-# 2026-08-16 설문(docs/survey-results-analysis.md)으로 T03/F04/D01/D03이 "국내수렴형"
-# (국내 화자는 이미 한 해석으로 강하게 쏠림)이라는 게 확인돼, T04/F02/D02/D04(설문에서
+# 설문(docs/culture-criteria.md 참고)으로 T03/F04/D01/D03이 "locally converged"
+# (국내 화자는 이미 한 해석으로 강하게 쏠림)라는 게 확인돼, T04/F02/D02/D04(설문에서
 # 실제로 표준편차가 가장 컸던 = 국내에서도 진짜 갈리는 항목)로 교체 — 모호성 탐지
 # few-shot 신호를 더 선명하게 하려는 의도.
 FEW_SHOT_ALLOWLIST = {"T01", "T04", "F01", "F02", "D02", "D04"}
@@ -93,8 +92,8 @@ def build_batch_user_prompt(entries: list[tuple[int, str, str, str, str]]) -> st
     return "\n\n".join(blocks)
 
 
-# 2026-08-16 reason-sync 실험(docs/survey-results-analysis.md 8절)으로 recall은 올랐지만
-# (0.810→0.905) precision이 떨어짐(0.739→0.655) — REQUEST_INTENT/DECISION_STATUS에서
+# reason-sync 실험으로 recall은 올랐지만(0.810→0.905) precision이 떨어짐(0.739→0.655)
+# — REQUEST_INTENT/DECISION_STATUS에서
 # 명시적 문장까지 과탐지. 1차 추출 뒤에 회의적으로 재검토하는 2차 호출을 추가해 과탐지만
 # 골라 제거한다(새 항목 추가는 금지 — 1차 결과의 부분집합만 반환하게 해서 recall 손실 방지).
 VERIFY_SYSTEM_PROMPT = """당신은 1차 추출이 flag한 "모호성 후보" 목록을 회의적으로 재검토하는

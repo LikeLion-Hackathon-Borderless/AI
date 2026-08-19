@@ -154,9 +154,9 @@ class LLMClient:
         # 13개(76%)가 RAG로 **자기 자신의 원본 판단기준표 항목을 few-shot으로 그대로
         # 받아오는** 것으로 확인됨(select_few_shot()이 draft와 가장 유사한 phrase를 고르는데,
         # golden set 자체가 culture_criteria.py 항목의 패러프레이즈라 거의 항상 원본이
-        # 뽑힘) — 이건 일반화가 아니라 정답 유출에 가까워서 측정치를 못 믿는다. 다시 False로
-        # 되돌림(2026-08-17, docs/survey-results-analysis.md 17-4절). 리키지 없이 재검증할
-        # 방법(leave-one-out 등)을 찾기 전까진 이 상태 유지.
+        # 뽑힘) — 이건 일반화가 아니라 정답 유출에 가까웠다. leave-one-out(`select_few_shot()`
+        # 의 `exclude_ids` 파라미터, `llm/retrieval.py` 참고)으로 유출을 막고 재검증했더니
+        # 모든 조합에서 오히려 baseline보다 나빴다 — False로 최종 확정.
         self.use_rag = use_rag
         # 기본값은 "mock"이 아니라 "live" — DITTO_LLM_MODE를 아예 안 정해둔 배포는 조용히
         # 가짜 응답만 내보내는 것보다 키가 없어 바로 죽는 게 훨씬 안전하다(silent failure 방지).
@@ -323,8 +323,8 @@ class LLMClient:
         few_shot_ids: set[str] | None = None,
     ) -> ExtractionResult:
         # seed 고정만으로는 배치 구조화 출력의 실행 간 노이즈가 안 사라진다는 걸 실측으로
-        # 확인함(survey-results-analysis.md 13절) — 같은 메시지를 n번 독립 추출해 카테고리
-        # 단위로 다수결하면 이 노이즈를 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
+        # 확인함 — 같은 메시지를 n번 독립 추출해 카테고리 단위로 다수결하면 이 노이즈를
+        # 구조적으로 상쇄할 수 있다. extract_batch()를 재사용해
         # 같은 (draft, context)를 n개 항목처럼 묶어 보내므로 API 호출 수는 그대로 1번(배치
         # 크기만 n)이라 RPD 부담이 늘지 않는다.
         # threshold 기본값은 과반(n//2+1)이 아니라 **만장일치(n)** — 2026-08-17 실측(13-1절)에서

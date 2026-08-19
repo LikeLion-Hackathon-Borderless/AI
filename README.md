@@ -41,7 +41,7 @@ uv run python examples/cli_demo.py   # 서버 없이 터미널에서 전체 흐�
 
 ## 현재 상태
 
-- 판단기준표(`docs/문화_판단기준표_초안.md`) 16개 항목, 설문(n=12~15)·인터뷰로 1차 검증
+- 판단기준표(`docs/culture-criteria.md`) 16개 항목, 설문(n=12~15)·인터뷰로 1차 검증
 - 골든셋(36케이스) 기준 recall 0.810 / precision 0.761 — 오해 방지 도구 특성상 모호성을
   놓치는 것(FN)이 과탐지(FP)보다 치명적이라 recall 우선으로 튜닝(근거:
   `agent/README.md`의 "정확도 설정" 절)

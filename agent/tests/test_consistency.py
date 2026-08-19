@@ -81,10 +81,9 @@ def test_mock_extract_consistent_calls_extract_batch_n_times(monkeypatch):
 
 
 def test_graph_default_no_consistency_still_reaches_two_interrupts(monkeypatch):
-    # build_graph() 기본값이 use_consistency=False로 최종 확정된 뒤(2026-08-17, 유출 없이
-    # 6회 반복·pooled n=108로 재측정한 결과 진짜 recall/precision 트레이드오프로 확인돼
-    # recall 우선 — survey-results-analysis.md 18절) mock 모드 end-to-end happy path가
-    # 그대로 유지되는지 확인.
+    # build_graph() 기본값이 use_consistency=False로 최종 확정된 뒤(유출 없이 6회 반복·
+    # pooled n=108로 재측정한 결과 진짜 recall/precision 트레이드오프로 확인돼 recall 우선)
+    # mock 모드 end-to-end happy path가 그대로 유지되는지 확인.
     monkeypatch.setenv("DITTO_LLM_MODE", "mock")
     graph = build_graph()
     config = {"configurable": {"thread_id": str(uuid.uuid4())}}

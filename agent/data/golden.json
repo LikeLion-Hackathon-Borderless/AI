@@ -103,7 +103,7 @@
     },
     {
       "pair_id": "C02-time-only",
-      "note": "C02를 TIME만 남기고 재작성 — OTHER 제외 결정(docs/research-other-category.md) 이후 배경 누락 신호는 안 재고, 시간 표현만 검증",
+      "note": "C02를 TIME만 남기고 재작성 — OTHER 제외 결정 이후 배경 누락 신호는 안 재고, 시간 표현만 검증",
       "ambiguous": {"draft": "이 문서 오늘까지 다시 작성해주세요.", "expected_categories": ["TIME"]},
       "explicit": {"draft": "이 문서를 오늘 18시(KST)까지 새 포맷으로 다시 작성해주세요.", "expected_categories": []}
     }
@@ -123,7 +123,7 @@
     }
   ],
   "known_limitations": [
-    "OTHER 카테고리(C01-04, Communicating 축) 전체를 이 golden set과 few-shot 프롬프트에서 뺐다 — 40개 완주 결과 recall 0/3, 문헌 조사로도 간접화법/톤 해석이 최고 성능 LLM도 사람 수준에 못 미치는 구조적 약점임을 확인(docs/research-other-category.md). TIME/REQUEST_INTENT/DECISION_STATUS 3개만 정식 지원.",
+    "OTHER 카테고리(C01-04, Communicating 축) 전체를 이 golden set과 few-shot 프롬프트에서 뺐다 — 실측 결과 recall이 다른 카테고리 대비 크게 낮았고, 문헌 조사로도 간접화법/톤 해석이 최고 성능 LLM도 사람 수준에 못 미치는 구조적 약점임을 확인했다(docs/culture-criteria.md 부록 참고). TIME/REQUEST_INTENT/DECISION_STATUS 3개만 정식 지원.",
     "C04(침묵/응답 없음)은 '메시지 텍스트 하나'로 표현할 수 없는 대화-턴 단위 신호라 애초에 golden set 대상이 아니었음 — extract()의 입력 형태(단일 draft 문자열) 자체가 감지 대상이 아님."
   ]
 }
