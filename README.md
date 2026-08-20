@@ -50,53 +50,69 @@ Slack·Teams 등 협업툴 위에 붙는 AI 플러그인형 B2B SaaS다. 비동�
 
 ```mermaid
 flowchart TB
-    IN(["start(draft, context)"]) --> EX["extract\n(모호성 추출)"]
-    EX --> CA{모호성 있음?}
-    CA -->|있음| INT["confirm_ambiguities\ninterrupt()로 대기"]
-    CA -->|없음| CC[conflict_check]
-    INT -->|"resume(thread_id, answer)\n순서대로 확정"| INT
-    INT -->|전부 확정됨| CC
+    IN(["start(draft, context)"]) --> EX["extract\n(모호성 추출,\nuse_consistency/use_rag 옵션)"]
+    EX -.->|"use_verify=True일 때만\n(기본 꺼짐)"| VER["verify_ambiguities\n2차 검수 재호출"]
+    VER -.-> CONF
+    EX --> CONF
+    CONF["confirm_ambiguities\n추출된 모호성 수만큼(0~N개)\ninterrupt()로 순서대로 대기"]
+    CONF -->|"resume(thread_id, answer)"| CONF
+    CONF -->|"전부 확정됨\n(0개면 즉시 통과)"| CC
     CC["conflict_check\n(근무시간 충돌)"] --> BC[build_card]
     BC --> TR["translate_card\n(receiver_lang 설정 시만)"]
     TR --> OUT(["StartResult(status=done, card)"])
-    INT -.->|모호성 남아있는 동안| OUT2(["StartResult(status=interrupt)"])
+    CONF -.->|미확정 항목 남아있는 동안| OUT2(["StartResult(status=interrupt)"])
 
     LLM[(OpenAI\n구조화 출력)]
     EX -.->|extract 호출| LLM
 ```
 
-메시지 하나가 `extract`에서 시작해 모호성 개수만큼(보통 0~2개) `confirm_ambiguities`에서
-순서대로 멈췄다 재개되고, 전부 확정되면 `conflict_check`(근무시간 충돌 검사) →
-`build_card`(카드 생성) → `translate_card`(수신자 언어 설정 시만 번역)를 거쳐 끝난다.
+`extract`는 그래프 진입점에서 항상 한 번 실행되고, `confirm_ambiguities`로 무조건
+넘어간다(그래프 수준의 "모호성 있음?" 분기 노드는 없다). `confirm_ambiguities` 안의
+루프가 추출된 모호성 개수(보통 0~2개)만큼 `interrupt()`를 순서대로 호출하고, 재개
+(`resume`) 때마다 같은 노드가 처음부터 다시 실행되며 이미 답한 항목은 캐시된 값으로
+건너뛴다. 모호성이 0개면 루프가 아예 안 돌아 멈추지 않고 바로 `conflict_check`로
+진행한다. `verify_ambiguities`는 `use_verify=True`일 때만 `extract`와
+`confirm_ambiguities` 사이에 끼는 선택적 2차 검수 노드인데, 실측에서 precision을
+0.679→0.500으로 오히려 악화시켜(`graph/build.py`) 기본값은 꺼져 있다.
 
 #### `extract` 노드 내부
 
 ```mermaid
 flowchart LR
-    D["draft + DraftContext"] --> SP["build_system_prompt()\nculture_criteria.py few-shot"]
-    D --> UP["build_user_prompt()"]
-    SP --> CALL["OpenAI chat.completions.parse\n(o3-mini, 구조화 출력)"]
-    UP --> CALL
+    D["draft + DraftContext"] --> RAG{use_rag?}
+    RAG -->|"True\n(기본 꺼짐)"| SEL["select_few_shot()\ndraft 임베딩 유사도로 6개 동적 선택"]
+    RAG -->|False 기본값| ALLOW["FEW_SHOT_ALLOWLIST\n고정 few-shot"]
+    SEL --> SP[build_system_prompt]
+    ALLOW --> SP
+    D --> UP[build_user_prompt]
+    SP --> CS{use_consistency?}
+    UP --> CS
+    CS -->|"True\n(기본 꺼짐)"| CONS["extract_consistent()\nn회 독립 추출 후\n카테고리 만장일치 투표"]
+    CS -->|False 기본값| SINGLE["extract()\n단발 호출"]
+    CONS --> CALL["OpenAI chat.completions.parse\n(o3-mini, 구조화 출력)"]
+    SINGLE --> CALL
     CALL --> PF["filter_false_positive_time()\n규칙 기반 후처리"]
     PF --> ER["ExtractionResult"]
 ```
 
-draft와 판단기준표(`culture_criteria.py`)에서 뽑은 few-shot 예시로 시스템 프롬프트를
-만들어 OpenAI 구조화 출력 호출을 하나 보내고, 응답이 오면 규칙 기반 후처리
-(`postfilter.py`)로 명시적 시각 표현이 TIME 모호성으로 잘못 잡힌 케이스를 걸러낸다.
-API 호출 없이 코드로만 처리해 정밀도를 올리는 마지막 단계다.
+`use_rag`(동적 few-shot 선택)와 `use_consistency`(self-consistency 다수결)는 둘 다
+`LLMClient` 생성 시점의 옵션이며 기본값은 둘 다 꺼짐이다. 둘 모두 golden set 실측에서
+baseline보다 나빴거나(RAG는 정답 유출, 아래 실험 결과 참고) recall을 깎아먹는
+트레이드오프가 있어서(self-consistency) 기본 파이프라인에서는 쓰지 않는다. 응답이
+오면 규칙 기반 후처리(`postfilter.py`)로 명시적 시각 표현이 TIME 모호성으로 잘못
+잡힌 케이스를 걸러낸다. API 호출 없이 코드로만 처리해 정밀도를 올리는 마지막 단계다.
 
 ### 트랙 경계(Border) 대응
 
 멋쟁이사자처럼 트랙이 정의한 4개 경계(지리/문화/조직/언어) 기준으로 이 패키지가 실제로
 커버하는 범위다.
 
-| Border | 대응 방식 | 새 UI 필요 여부 |
-|---|---|---|
-| 지리 | TIME 카테고리 + `graph/conflict.py`(근무시간 충돌 검사) | 불필요. 기존 카드의 `기한` 필드로 표현 |
-| 문화 | REQUEST_INTENT(완곡한 반대 표현 등. 문헌 근거가 4개 카테고리 중 가장 탄탄) | 불필요 |
-| 조직 | DECISION_STATUS를 `DECISION_STATUS_VOCABULARY`(6개 정규화 상태값)로 **정규화**해 "승인"/"완료"/"컨펌"의 조직별 뜻 차이를 흡수 | 불필요. 기존 `결정 상태` 필드로 표현 |
-| 언어 | `DraftContext.receiver_lang` 설정 시 `translate_card_node`가 카드의 자유 텍스트 필드만 번역, 구조화된 값(타임스탬프·정규화된 상태)은 그대로 둠 | 불필요. 같은 카드 필드, 값만 로컬라이즈 |
+| Border | 대응 방식 |
+|---|---|
+| 지리 | TIME 카테고리 + `graph/conflict.py`(근무시간 충돌 검사) |
+| 문화 | REQUEST_INTENT(완곡한 반대 표현 등. 문헌 근거가 4개 카테고리 중 가장 탄탄) |
+| 조직 | DECISION_STATUS를 `DECISION_STATUS_VOCABULARY`(6개 정규화 상태값)로 **정규화**해 "승인"/"완료"/"컨펌"의 조직별 뜻 차이를 흡수 |
+| 언어 | `DraftContext.receiver_lang` 설정 시 `translate_card_node`가 카드의 자유 텍스트 필드만 번역, 구조화된 값(타임스탬프·정규화된 상태)은 그대로 둠 |
 
 **Communicating(톤/맥락 해석)은 의도적으로 스코프에서 제외했다.** 골든셋 실측에서
 다른 카테고리 대비 recall이 크게 낮았고, 최고 성능 LLM도 간접화법·톤 해석은 사람 수준에
